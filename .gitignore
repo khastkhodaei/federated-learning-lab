@@ -1,0 +1,33 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+.venv/
+ENV/
+env/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IDE and editors
+.vscode/
+.idea/
+
+# Datasets & Checkpoints
+data/
+datasets/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.h5
+logs/
+wandb/
+runs/
+
+# Environment variables
+.env
