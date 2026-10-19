@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, Set
 import grpc
 
@@ -8,6 +9,8 @@ from src.transport.federated_pb2 import (
     UpdateResponse,
 )
 from src.transport.federated_pb2_grpc import FederatedServiceServicer
+
+logger = logging.getLogger(__name__)
 
 
 class FederatedServerServicer(FederatedServiceServicer):
@@ -21,6 +24,7 @@ class FederatedServerServicer(FederatedServiceServicer):
         self, request: RegisterRequest, context: grpc.ServicerContext
     ) -> RegisterResponse:
         self.registered_nodes.add(request.node_id)
+        logger.info("Registered node: %s", request.node_id)
         return RegisterResponse(
             success=True, message=f"Node {request.node_id} registered."
         )
@@ -29,6 +33,12 @@ class FederatedServerServicer(FederatedServiceServicer):
         self, request: UpdateRequest, context: grpc.ServicerContext
     ) -> UpdateResponse:
         self.updates[request.node_id] = request
+        logger.info(
+            "Received update from %s (samples: %d, weights: %d bytes)",
+            request.node_id,
+            request.num_samples,
+            len(request.weights),
+        )
         return UpdateResponse(
             success=True, message=f"Update received from {request.node_id}."
         )
