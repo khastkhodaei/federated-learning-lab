@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dsrc/transport/federated.proto\x12\tfederated\"\"\n\x0fRegisterRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\"4\n\x10RegisterResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"F\n\rUpdateRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x13\n\x0bnum_samples\x18\x02 \x01(\x05\x12\x0f\n\x07weights\x18\x03 \x01(\x0c\"2\n\x0eUpdateResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t2\xa0\x01\n\x10\x46\x65\x64\x65ratedService\x12G\n\x0cRegisterNode\x12\x1a.federated.RegisterRequest\x1a\x1b.federated.RegisterResponse\x12\x43\n\x0cSubmitUpdate\x12\x18.federated.UpdateRequest\x1a\x19.federated.UpdateResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dsrc/transport/federated.proto\x12\tfederated\"3\n\x0fRegisterRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x02 \x01(\t\"4\n\x10RegisterResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"F\n\rUpdateRequest\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x13\n\x0bnum_samples\x18\x02 \x01(\x05\x12\x0f\n\x07weights\x18\x03 \x01(\x0c\"2\n\x0eUpdateResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"A\n\x0cTrainRequest\x12\x10\n\x08round_id\x18\x01 \x01(\x05\x12\x0f\n\x07weights\x18\x02 \x01(\x0c\x12\x0e\n\x06\x65pochs\x18\x03 \x01(\x05\"h\n\rTrainResponse\x12\x0f\n\x07node_id\x18\x01 \x01(\t\x12\x13\n\x0bnum_samples\x18\x02 \x01(\x05\x12\x0f\n\x07weights\x18\x03 \x01(\x0c\x12\x0f\n\x07success\x18\x04 \x01(\x08\x12\x0f\n\x07message\x18\x05 \x01(\t2\xa0\x01\n\x10\x46\x65\x64\x65ratedService\x12G\n\x0cRegisterNode\x12\x1a.federated.RegisterRequest\x1a\x1b.federated.RegisterResponse\x12\x43\n\x0cSubmitUpdate\x12\x18.federated.UpdateRequest\x1a\x19.federated.UpdateResponse2N\n\x0bNodeService\x12?\n\nTrainRound\x12\x17.federated.TrainRequest\x1a\x18.federated.TrainResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,13 +32,19 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'src.transport.federated_pb2
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_REGISTERREQUEST']._serialized_start=44
-  _globals['_REGISTERREQUEST']._serialized_end=78
-  _globals['_REGISTERRESPONSE']._serialized_start=80
-  _globals['_REGISTERRESPONSE']._serialized_end=132
-  _globals['_UPDATEREQUEST']._serialized_start=134
-  _globals['_UPDATEREQUEST']._serialized_end=204
-  _globals['_UPDATERESPONSE']._serialized_start=206
-  _globals['_UPDATERESPONSE']._serialized_end=256
-  _globals['_FEDERATEDSERVICE']._serialized_start=259
-  _globals['_FEDERATEDSERVICE']._serialized_end=419
+  _globals['_REGISTERREQUEST']._serialized_end=95
+  _globals['_REGISTERRESPONSE']._serialized_start=97
+  _globals['_REGISTERRESPONSE']._serialized_end=149
+  _globals['_UPDATEREQUEST']._serialized_start=151
+  _globals['_UPDATEREQUEST']._serialized_end=221
+  _globals['_UPDATERESPONSE']._serialized_start=223
+  _globals['_UPDATERESPONSE']._serialized_end=273
+  _globals['_TRAINREQUEST']._serialized_start=275
+  _globals['_TRAINREQUEST']._serialized_end=340
+  _globals['_TRAINRESPONSE']._serialized_start=342
+  _globals['_TRAINRESPONSE']._serialized_end=446
+  _globals['_FEDERATEDSERVICE']._serialized_start=449
+  _globals['_FEDERATEDSERVICE']._serialized_end=609
+  _globals['_NODESERVICE']._serialized_start=611
+  _globals['_NODESERVICE']._serialized_end=689
 # @@protoc_insertion_point(module_scope)

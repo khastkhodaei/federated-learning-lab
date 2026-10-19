@@ -26,7 +26,8 @@ if _version_not_supported:
 
 
 class FederatedServiceStub:
-    """Missing associated documentation comment in .proto file."""
+    """Service hosted by the central coordinator/server
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -47,7 +48,8 @@ class FederatedServiceStub:
 
 
 class FederatedServiceServicer:
-    """Missing associated documentation comment in .proto file."""
+    """Service hosted by the central coordinator/server
+    """
 
     def RegisterNode(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -83,7 +85,8 @@ def add_FederatedServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class FederatedService:
-    """Missing associated documentation comment in .proto file."""
+    """Service hosted by the central coordinator/server
+    """
 
     @staticmethod
     def RegisterNode(request,
@@ -129,6 +132,81 @@ class FederatedService:
             '/federated.FederatedService/SubmitUpdate',
             src_dot_transport_dot_federated__pb2.UpdateRequest.SerializeToString,
             src_dot_transport_dot_federated__pb2.UpdateResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class NodeServiceStub:
+    """Service hosted by each Node (Client or Peer)
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.TrainRound = channel.unary_unary(
+                '/federated.NodeService/TrainRound',
+                request_serializer=src_dot_transport_dot_federated__pb2.TrainRequest.SerializeToString,
+                response_deserializer=src_dot_transport_dot_federated__pb2.TrainResponse.FromString,
+                _registered_method=True)
+
+
+class NodeServiceServicer:
+    """Service hosted by each Node (Client or Peer)
+    """
+
+    def TrainRound(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_NodeServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'TrainRound': grpc.unary_unary_rpc_method_handler(
+                    servicer.TrainRound,
+                    request_deserializer=src_dot_transport_dot_federated__pb2.TrainRequest.FromString,
+                    response_serializer=src_dot_transport_dot_federated__pb2.TrainResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'federated.NodeService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('federated.NodeService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class NodeService:
+    """Service hosted by each Node (Client or Peer)
+    """
+
+    @staticmethod
+    def TrainRound(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/federated.NodeService/TrainRound',
+            src_dot_transport_dot_federated__pb2.TrainRequest.SerializeToString,
+            src_dot_transport_dot_federated__pb2.TrainResponse.FromString,
             options,
             channel_credentials,
             insecure,
