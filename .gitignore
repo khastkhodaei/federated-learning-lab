@@ -1,4 +1,4 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,6 +20,7 @@ env/
 # Datasets & Checkpoints
 data/
 datasets/
+!src/datasets/
 checkpoints/
 *.pt
 *.pth
