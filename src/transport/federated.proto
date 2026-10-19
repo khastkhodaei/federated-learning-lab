@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package federated;
+
+service FederatedService {
+  rpc RegisterNode (RegisterRequest) returns (RegisterResponse);
+  rpc SubmitUpdate (UpdateRequest) returns (UpdateResponse);
+}
+
+message RegisterRequest {
+  string node_id = 1;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message UpdateRequest {
+  string node_id = 1;
+  int32 num_samples = 2;
+  bytes weights = 3;
+}
+
+message UpdateResponse {
+  bool success = 1;
+  string message = 2;
+}
