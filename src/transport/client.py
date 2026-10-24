@@ -20,8 +20,8 @@ class FederatedClient:
         self.channel = channel if channel is not None else grpc.insecure_channel(self.target)
         self.stub = FederatedServiceStub(self.channel)
 
-    def register_node(self, node_id: str) -> RegisterResponse:
-        request = RegisterRequest(node_id=node_id)
+    def register_node(self, node_id: str, address: str = "") -> RegisterResponse:
+        request = RegisterRequest(node_id=node_id, address=address)
         return self.stub.RegisterNode(request)
 
     def submit_update(
