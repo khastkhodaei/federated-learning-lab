@@ -248,7 +248,9 @@ def create_client_node(
     elif load_dataset:
         try:
             from fl_data_generator import FederatedDataset
+            from src.datasets.transforms import get_default_transform
 
+            transform = get_default_transform(config.dataset.name)
             fed_ds = FederatedDataset(
                 dataset=config.dataset.name,
                 data_dir=config.dataset.data_dir,
@@ -256,6 +258,7 @@ def create_client_node(
                 partition=config.dataset.partition,
                 alpha=config.dataset.alpha,
                 seed=config.dataset.seed,
+                transform=transform,
             )
             data_loader = fed_ds.get_client_dataloader(
                 client_id=config.dataset.client_id,

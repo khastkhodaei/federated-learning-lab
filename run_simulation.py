@@ -81,7 +81,9 @@ def run_federated_simulation(
             num_clients,
         )
         from fl_data_generator import FederatedDataset
+        from src.datasets.transforms import get_default_transform
 
+        transform = get_default_transform(base_cfg.dataset.name)
         fed_dataset = FederatedDataset(
             dataset=base_cfg.dataset.name,
             data_dir=base_cfg.dataset.data_dir,
@@ -89,6 +91,7 @@ def run_federated_simulation(
             partition=base_cfg.dataset.partition,
             alpha=base_cfg.dataset.alpha,
             seed=base_cfg.dataset.seed,
+            transform=transform,
         )
 
     # Initialize and register all client nodes
