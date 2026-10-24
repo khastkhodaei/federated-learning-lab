@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 import grpc
 import torch.nn as nn
+from src.server.aggregation import fedavg_bytes
 from src.server.service import FederatedServerServicer
 from src.transport.federated_pb2 import TrainRequest, TrainResponse
 from src.transport.federated_pb2_grpc import (
@@ -80,11 +81,12 @@ class FederatedServer:
         weights: Optional[bytes] = None,
         epochs: int = 1,
         timeout: Optional[float] = None,
+        aggregate: bool = False,
     ) -> List[TrainResponse]:
         """Commands all registered nodes to execute a training round in parallel
-
         and waits until all responses are collected (synchronous round barrier).
         If weights are not explicitly provided, uses the server's initial/current global model.
+        If aggregate is True, aggregates the updates via FedAvg and updates the global model.
         """
         payload = weights if weights is not None else self.get_global_weights()
 
@@ -133,7 +135,35 @@ class FederatedServer:
             len(responses),
             len(valid_nodes),
         )
+
+        if aggregate:
+            self.aggregate_responses(responses)
+
         return responses
+
+    def aggregate_responses(self, responses: List[TrainResponse]) -> Optional[bytes]:
+        """Aggregates successful TrainRound responses using FedAvg and updates the global model.
+
+        Returns:
+            Serialized aggregated parameter bytes, or None if no valid updates.
+        """
+        valid_updates = [
+            (r.weights, r.num_samples)
+            for r in responses
+            if r.success and r.weights
+        ]
+        if not valid_updates:
+            logger.warning("No successful client updates with weights to aggregate.")
+            return None
+
+        aggregated_bytes = fedavg_bytes(valid_updates)
+        if self.global_model is not None:
+            load_bytes_into_model(aggregated_bytes, self.global_model)
+            logger.info(
+                "Server global model updated via FedAvg aggregation (%d bytes).",
+                len(aggregated_bytes),
+            )
+        return aggregated_bytes
 
 
 if __name__ == "__main__":
