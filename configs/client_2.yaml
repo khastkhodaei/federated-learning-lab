@@ -1,0 +1,27 @@
+node_id: "client_2"
+server_address: "127.0.0.1:50051"
+client_host: "127.0.0.1"
+client_port: 0
+
+dataset:
+  name: "cifar10"
+  partition: "dirichlet"
+  alpha: 0.5
+  client_id: 1
+  num_clients: 2
+  batch_size: 32
+  data_dir: "./data"
+  seed: 42
+
+model:
+  name: "simple_cnn"
+  seed: 42
+
+training:
+  learning_rate: 0.02
+  loss: "cross_entropy"
+  optimizer:
+    name: "sgd"
+    momentum: 0.95
+    weight_decay: 0.0001
+  device: "cpu"

@@ -195,22 +195,30 @@ class Node:
 
 
 if __name__ == "__main__":
+    from src.client.config import create_client_node
+
     logging.basicConfig(
         level=logging.INFO,
         format="[%(asctime)s] [CLIENT] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    node_id = sys.argv[1] if len(sys.argv) > 1 else "client_1"
-    server_address = sys.argv[2] if len(sys.argv) > 2 else "localhost:50051"
-    node_port = int(sys.argv[3]) if len(sys.argv) > 3 else None
 
-    print(f"\n>>> Starting Node '{node_id}' (port: {node_port or 'no listener'})...\n")
-    transport = FederatedClient(target=server_address)
-    node = Node(node_id=node_id, transport=transport, port=node_port)
+    if len(sys.argv) > 1 and sys.argv[1].endswith((".yaml", ".yml")):
+        config_path = sys.argv[1]
+        print(f"\n>>> Starting Node from config: '{config_path}'...\n")
+        node = create_client_node(config_path, load_dataset=True)
+    else:
+        node_id = sys.argv[1] if len(sys.argv) > 1 else "client_1"
+        server_address = sys.argv[2] if len(sys.argv) > 2 else "localhost:50051"
+        node_port = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
-    # 1. Register with server
+        print(f"\n>>> Starting Node '{node_id}' (port: {node_port})...\n")
+        transport = FederatedClient(target=server_address)
+        node = Node(node_id=node_id, transport=transport, port=node_port)
+
+    # Register with server
     reg_res = node.register()
-    print(f"Server response: {reg_res.message if reg_res else 'Failed'}")
+    print(f"Server registration response: {reg_res.message if reg_res else 'Failed'}")
 
     # 2. Send sample update
     dummy_weights = b"sample_model_weights_tensor"

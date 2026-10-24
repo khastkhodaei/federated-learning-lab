@@ -1,0 +1,9 @@
+host: "0.0.0.0"
+port: 50051
+
+model:
+  name: "simple_cnn"
+  seed: 42
+
+rounds: 5
+epochs_per_round: 1
