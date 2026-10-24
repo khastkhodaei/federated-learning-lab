@@ -2,12 +2,15 @@ from concurrent import futures
 import logging
 import os
 import sys
-from typing import Any, Optional
+from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
 # Ensure repository root is on sys.path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import grpc
+import torch
+import torch.nn as nn
+from torch.optim import Optimizer
 from src.client.service import ClientNodeServicer
 from src.transport.client import FederatedClient
 from src.transport.federated_pb2 import (
@@ -25,24 +28,39 @@ logger = logging.getLogger(__name__)
 class Node:
     """Represents a client node in a federated learning network.
 
-    Can act as a client talking to a central server, and optionally run its
-    own gRPC listener to receive commands/rounds from the coordinator or peers.
+    Manages local model parameters, private dataset partitions,
+    and handles incoming gRPC TrainRound RPCs from the server.
     """
 
     def __init__(
         self,
         node_id: str | int,
         data: Optional[Any] = None,
-        model: Optional[Any] = None,
+        model: Optional[nn.Module] = None,
         transport: Optional[FederatedClient] = None,
+        criterion: Optional[nn.Module] = None,
+        optimizer_fn: Optional[Callable[[Iterable[nn.Parameter]], Optimizer]] = None,
+        lr: float = 0.01,
+        device: Union[str, torch.device] = "cpu",
         host: str = "127.0.0.1",
         port: Optional[int] = None,
         max_workers: int = 5,
     ) -> None:
         self.node_id = str(node_id)
         self.data = data
-        self.model = model
+        self.device = torch.device(device)
+        self.model = model.to(self.device) if model is not None else None
         self.transport = transport
+        self.lr = lr
+        self.criterion = criterion if criterion is not None else nn.CrossEntropyLoss()
+
+        if optimizer_fn is not None:
+            self._optimizer_fn = optimizer_fn
+        else:
+            self._optimizer_fn = lambda params: torch.optim.SGD(
+                params, lr=self.lr, momentum=0.9
+            )
+
         self.host = host
         self.port = port
 
@@ -99,37 +117,80 @@ class Node:
             return response
         return None
 
+    def train_local(self, epochs: int = 1) -> Tuple[bytes, int]:
+        """Executes local gradient descent on self.data for the specified epochs.
+
+        Returns:
+            Tuple of (serialized_updated_weights, num_samples_trained).
+        """
+        if self.model is None or self.data is None:
+            weights = model_to_bytes(self.model) if self.model is not None else b""
+            return weights, 0
+
+        self.model.train()
+        optimizer = self._optimizer_fn(self.model.parameters())
+        total_samples = 0
+
+        for _ in range(epochs):
+            for batch in self.data:
+                inputs, targets = batch[0].to(self.device), batch[1].to(self.device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
+                total_samples += targets.size(0)
+
+        updated_weights = model_to_bytes(self.model)
+        return updated_weights, total_samples
+
     def on_train_round(self, request: TrainRequest) -> TrainResponse:
         """Handles an incoming gRPC TrainRound request from the server.
 
-        Unpacks the received model parameters into self.model at the start of the round.
+        1. Unpacks received global weights into self.model at the start of the round.
+        2. Executes local training on self.data for request.epochs.
+        3. Returns the updated weights and sample count directly in TrainResponse.
         """
         logger.info(
-            "Node %s received model parameters for round %d over gRPC (%d bytes)",
+            "Node %s starting round %d (epochs: %d, received weights: %d bytes)",
             self.node_id,
             request.round_id,
+            request.epochs,
             len(request.weights),
         )
 
-        # Unpack received weights into local model
+        # 1. Unpack received global weights into local model
         if self.model is not None and request.weights:
             load_bytes_into_model(request.weights, self.model)
             logger.info(
-                "Node %s successfully synchronized local model with round %d global parameters",
+                "Node %s synchronized local model with round %d global parameters",
                 self.node_id,
                 request.round_id,
             )
 
-        weights_payload = (
-            model_to_bytes(self.model) if self.model is not None else request.weights
+        # 2. Run local gradient descent training if data and model are present
+        epochs = max(1, request.epochs)
+        if self.model is not None and self.data is not None:
+            updated_weights, num_samples = self.train_local(epochs=epochs)
+        elif self.model is not None:
+            updated_weights, num_samples = model_to_bytes(self.model), 0
+        else:
+            updated_weights, num_samples = request.weights, 0
+
+        logger.info(
+            "Node %s completed round %d handling (trained samples: %d)",
+            self.node_id,
+            request.round_id,
+            num_samples,
         )
 
+        # 3. Return updated weights directly over gRPC
         return TrainResponse(
             node_id=str(self.node_id),
-            num_samples=0,
-            weights=weights_payload,
+            num_samples=num_samples,
+            weights=updated_weights,
             success=True,
-            message=f"Node {self.node_id} synchronized parameters for round {request.round_id}.",
+            message=f"Node {self.node_id} completed {epochs} epoch(s) for round {request.round_id}.",
         )
 
 
