@@ -1,0 +1,27 @@
+# Global default settings template for federated learning clients
+# When running with N clients, individual client IDs (0 to N-1) are assigned dynamically.
+
+server_address: "127.0.0.1:50051"
+client_host: "127.0.0.1"
+client_port: 0
+
+dataset:
+  name: "cifar10"
+  partition: "dirichlet"
+  alpha: 0.5
+  batch_size: 32
+  data_dir: "./data"
+  seed: 42
+
+model:
+  name: "simple_cnn"
+  seed: 42
+
+training:
+  learning_rate: 0.01
+  loss: "cross_entropy"
+  optimizer:
+    name: "sgd"
+    momentum: 0.9
+    weight_decay: 0.0001
+  device: "cpu"

@@ -64,11 +64,19 @@ class ClientConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
 
-def load_client_config(config_path: Union[str, Path]) -> ClientConfig:
-    """Loads a ClientConfig from a YAML file.
+def load_client_config(
+    config_path: Union[str, Path],
+    node_id: Optional[str] = None,
+    client_id: Optional[int] = None,
+    num_clients: Optional[int] = None,
+) -> ClientConfig:
+    """Loads a ClientConfig from a YAML file with optional runtime overrides.
 
     Args:
         config_path: Path to the YAML configuration file.
+        node_id: Optional node ID override. If None and not in YAML, defaults to f"client_{client_id}".
+        client_id: Optional client partition index override.
+        num_clients: Optional total participating clients override.
 
     Returns:
         Populated ClientConfig instance.
@@ -102,19 +110,33 @@ def load_client_config(config_path: Union[str, Path]) -> ClientConfig:
     )
 
     dataset_data = data.get("dataset", {})
+    effective_client_id = (
+        client_id if client_id is not None else int(dataset_data.get("client_id", 0))
+    )
+    effective_num_clients = (
+        num_clients if num_clients is not None else int(dataset_data.get("num_clients", 2))
+    )
+
     dataset_cfg = DatasetConfig(
         name=dataset_data.get("name", "cifar10"),
         batch_size=int(dataset_data.get("batch_size", 32)),
-        client_id=int(dataset_data.get("client_id", 0)),
-        num_clients=int(dataset_data.get("num_clients", 2)),
+        client_id=effective_client_id,
+        num_clients=effective_num_clients,
         partition=dataset_data.get("partition", "dirichlet"),
         alpha=float(dataset_data.get("alpha", 0.5)),
         data_dir=dataset_data.get("data_dir", "./data"),
         seed=dataset_data.get("seed", 42),
     )
 
+    if node_id is not None:
+        effective_node_id = str(node_id)
+    elif data.get("node_id") is not None:
+        effective_node_id = str(data["node_id"])
+    else:
+        effective_node_id = f"client_{effective_client_id}"
+
     return ClientConfig(
-        node_id=str(data.get("node_id", "client_1")),
+        node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
         client_host=str(data.get("client_host", "127.0.0.1")),
         client_port=data.get("client_port", 0),
@@ -177,18 +199,34 @@ def create_model(model_cfg: ModelConfig) -> nn.Module:
 def create_client_node(
     config: Union[ClientConfig, str, Path],
     load_dataset: bool = True,
+    client_id: Optional[int] = None,
+    num_clients: Optional[int] = None,
+    node_id: Optional[str] = None,
+    fed_dataset: Optional[Any] = None,
 ) -> Node:
     """Instantiates and configures a Node from a ClientConfig or YAML file path.
 
     Args:
         config: ClientConfig instance or path to a YAML configuration file.
         load_dataset: If True, uses fl_data_generator to download/load the client partition.
+        client_id: Optional client partition index override.
+        num_clients: Optional total participating clients override.
+        node_id: Optional node identifier override.
+        fed_dataset: Optional pre-initialized FederatedDataset to avoid re-partitioning.
 
     Returns:
         Ready-to-run Node instance.
     """
     if isinstance(config, (str, Path)):
-        config = load_client_config(config)
+        config = load_client_config(
+            config, node_id=node_id, client_id=client_id, num_clients=num_clients
+        )
+    elif client_id is not None:
+        config.dataset.client_id = client_id
+        if num_clients is not None:
+            config.dataset.num_clients = num_clients
+        if node_id is not None:
+            config.node_id = node_id
 
     # 1. Model
     model = create_model(config.model)
@@ -201,11 +239,17 @@ def create_client_node(
 
     # 3. Dataset
     data_loader = None
-    if load_dataset:
+    if fed_dataset is not None:
+        data_loader = fed_dataset.get_client_dataloader(
+            client_id=config.dataset.client_id,
+            batch_size=config.dataset.batch_size,
+            shuffle=True,
+        )
+    elif load_dataset:
         try:
             from fl_data_generator import FederatedDataset
 
-            fed_dataset = FederatedDataset(
+            fed_ds = FederatedDataset(
                 dataset=config.dataset.name,
                 data_dir=config.dataset.data_dir,
                 num_clients=config.dataset.num_clients,
@@ -213,7 +257,7 @@ def create_client_node(
                 alpha=config.dataset.alpha,
                 seed=config.dataset.seed,
             )
-            data_loader = fed_dataset.get_client_dataloader(
+            data_loader = fed_ds.get_client_dataloader(
                 client_id=config.dataset.client_id,
                 batch_size=config.dataset.batch_size,
                 shuffle=True,
@@ -246,3 +290,4 @@ def create_client_node(
         host=config.client_host,
         port=config.client_port,
     )
+
