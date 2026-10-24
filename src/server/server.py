@@ -2,14 +2,18 @@ from concurrent import futures
 import logging
 import os
 import sys
-from typing import Optional
+from typing import List, Optional
 
 # Ensure repository root is on sys.path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import grpc
 from src.server.service import FederatedServerServicer
-from src.transport.federated_pb2_grpc import add_FederatedServiceServicer_to_server
+from src.transport.federated_pb2 import TrainRequest, TrainResponse
+from src.transport.federated_pb2_grpc import (
+    NodeServiceStub,
+    add_FederatedServiceServicer_to_server,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,63 @@ class FederatedServer:
     def wait_for_termination(self) -> None:
         """Blocks until the server terminates."""
         self.server.wait_for_termination()
+
+    def trigger_round(
+        self,
+        round_id: int,
+        weights: bytes,
+        epochs: int = 1,
+        timeout: Optional[float] = None,
+    ) -> List[TrainResponse]:
+        """Commands all registered nodes to execute a training round in parallel
+
+        and waits until all responses are collected (synchronous round barrier).
+        """
+        registered = dict(self.servicer.registered_nodes)
+        valid_nodes = {nid: addr for nid, addr in registered.items() if addr}
+
+        if not valid_nodes:
+            logger.warning(
+                "No registered nodes with reachable addresses to trigger round %d.",
+                round_id,
+            )
+            return []
+
+        logger.info(
+            "Triggering round %d on %d nodes in parallel (epochs: %d)...",
+            round_id,
+            len(valid_nodes),
+            epochs,
+        )
+
+        def _call_node(node_id: str, address: str) -> TrainResponse:
+            with grpc.insecure_channel(address) as channel:
+                stub = NodeServiceStub(channel)
+                req = TrainRequest(round_id=round_id, weights=weights, epochs=epochs)
+                return stub.TrainRound(req, timeout=timeout)
+
+        responses: List[TrainResponse] = []
+        with futures.ThreadPoolExecutor(max_workers=len(valid_nodes)) as executor:
+            future_to_node = {
+                executor.submit(_call_node, nid, addr): nid
+                for nid, addr in valid_nodes.items()
+            }
+            for fut in futures.as_completed(future_to_node):
+                nid = future_to_node[fut]
+                try:
+                    res = fut.result()
+                    responses.append(res)
+                    logger.info("Received TrainRound response from %s (success: %s)", nid, res.success)
+                except Exception as err:
+                    logger.error("Failed to train round %d on node %s: %s", round_id, nid, err)
+
+        logger.info(
+            "Round %d completed. Gathered %d/%d updates.",
+            round_id,
+            len(responses),
+            len(valid_nodes),
+        )
+        return responses
 
 
 if __name__ == "__main__":
