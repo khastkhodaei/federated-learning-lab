@@ -8,12 +8,14 @@ from typing import List, Optional
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import grpc
+import torch.nn as nn
 from src.server.service import FederatedServerServicer
 from src.transport.federated_pb2 import TrainRequest, TrainResponse
 from src.transport.federated_pb2_grpc import (
     NodeServiceStub,
     add_FederatedServiceServicer_to_server,
 )
+from src.utils.serialization import load_bytes_into_model, model_to_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +27,28 @@ class FederatedServer:
         self,
         host: str = "0.0.0.0",
         port: int = 50051,
+        model: Optional[nn.Module] = None,
         servicer: Optional[FederatedServerServicer] = None,
         max_workers: int = 10,
     ) -> None:
         self.host = host
         self.port = port
+        self.global_model = model
         self.servicer = servicer if servicer is not None else FederatedServerServicer()
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         add_FederatedServiceServicer_to_server(self.servicer, self.server)
         self.bound_port = self.server.add_insecure_port(f"{self.host}:{self.port}")
+
+    def get_global_weights(self) -> bytes:
+        """Returns the current global model parameters serialized as raw bytes."""
+        if self.global_model is None:
+            return b""
+        return model_to_bytes(self.global_model)
+
+    def set_global_weights(self, weights: bytes) -> None:
+        """Loads serialized weights into the server's global model."""
+        if self.global_model is not None and weights:
+            load_bytes_into_model(weights, self.global_model)
 
     def start(self) -> None:
         """Starts the gRPC server to accept incoming connections."""
@@ -52,14 +67,17 @@ class FederatedServer:
     def trigger_round(
         self,
         round_id: int,
-        weights: bytes,
+        weights: Optional[bytes] = None,
         epochs: int = 1,
         timeout: Optional[float] = None,
     ) -> List[TrainResponse]:
         """Commands all registered nodes to execute a training round in parallel
 
         and waits until all responses are collected (synchronous round barrier).
+        If weights are not explicitly provided, uses the server's initial/current global model.
         """
+        payload = weights if weights is not None else self.get_global_weights()
+
         registered = dict(self.servicer.registered_nodes)
         valid_nodes = {nid: addr for nid, addr in registered.items() if addr}
 
@@ -71,16 +89,17 @@ class FederatedServer:
             return []
 
         logger.info(
-            "Triggering round %d on %d nodes in parallel (epochs: %d)...",
+            "Triggering round %d on %d nodes in parallel (epochs: %d, payload: %d bytes)...",
             round_id,
             len(valid_nodes),
             epochs,
+            len(payload),
         )
 
         def _call_node(node_id: str, address: str) -> TrainResponse:
             with grpc.insecure_channel(address) as channel:
                 stub = NodeServiceStub(channel)
-                req = TrainRequest(round_id=round_id, weights=weights, epochs=epochs)
+                req = TrainRequest(round_id=round_id, weights=payload, epochs=epochs)
                 return stub.TrainRound(req, timeout=timeout)
 
         responses: List[TrainResponse] = []
