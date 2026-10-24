@@ -28,12 +28,22 @@ class FederatedServer:
         host: str = "0.0.0.0",
         port: int = 50051,
         model: Optional[nn.Module] = None,
+        seed: Optional[int] = None,
         servicer: Optional[FederatedServerServicer] = None,
         max_workers: int = 10,
     ) -> None:
         self.host = host
         self.port = port
-        self.global_model = model
+        self.seed = seed
+        if model is not None:
+            self.global_model = model
+        elif seed is not None:
+            from src.models.cnn import SimpleCNN
+
+            self.global_model = SimpleCNN(seed=seed)
+        else:
+            self.global_model = None
+
         self.servicer = servicer if servicer is not None else FederatedServerServicer()
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         add_FederatedServiceServicer_to_server(self.servicer, self.server)

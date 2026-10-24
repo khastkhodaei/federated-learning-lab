@@ -10,8 +10,14 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 import grpc
 from src.client.service import ClientNodeServicer
 from src.transport.client import FederatedClient
-from src.transport.federated_pb2 import RegisterResponse, UpdateResponse
+from src.transport.federated_pb2 import (
+    RegisterResponse,
+    TrainRequest,
+    TrainResponse,
+    UpdateResponse,
+)
 from src.transport.federated_pb2_grpc import add_NodeServiceServicer_to_server
+from src.utils.serialization import load_bytes_into_model, model_to_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +98,39 @@ class Node:
             logger.info("Node %s update response: %s", self.node_id, response.message)
             return response
         return None
+
+    def on_train_round(self, request: TrainRequest) -> TrainResponse:
+        """Handles an incoming gRPC TrainRound request from the server.
+
+        Unpacks the received model parameters into self.model at the start of the round.
+        """
+        logger.info(
+            "Node %s received model parameters for round %d over gRPC (%d bytes)",
+            self.node_id,
+            request.round_id,
+            len(request.weights),
+        )
+
+        # Unpack received weights into local model
+        if self.model is not None and request.weights:
+            load_bytes_into_model(request.weights, self.model)
+            logger.info(
+                "Node %s successfully synchronized local model with round %d global parameters",
+                self.node_id,
+                request.round_id,
+            )
+
+        weights_payload = (
+            model_to_bytes(self.model) if self.model is not None else request.weights
+        )
+
+        return TrainResponse(
+            node_id=str(self.node_id),
+            num_samples=0,
+            weights=weights_payload,
+            success=True,
+            message=f"Node {self.node_id} synchronized parameters for round {request.round_id}.",
+        )
 
 
 if __name__ == "__main__":

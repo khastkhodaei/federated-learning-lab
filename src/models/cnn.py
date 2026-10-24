@@ -1,3 +1,4 @@
+from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,8 +7,12 @@ import torch.nn.functional as F
 class SimpleCNN(nn.Module):
     """Simple 2-layer Convolutional Neural Network with 1 hidden FC layer for CIFAR-10."""
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 10) -> None:
+    def __init__(
+        self, in_channels: int = 3, num_classes: int = 10, seed: Optional[int] = None
+    ) -> None:
         super().__init__()
+        if seed is not None:
+            torch.manual_seed(seed)
         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
