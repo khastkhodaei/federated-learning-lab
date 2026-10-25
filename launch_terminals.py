@@ -55,6 +55,8 @@ def load_launch_config(
     seed = int(ds_cfg.get("seed", 42))
     baseline = str(server_data.get("baseline", client_data.get("baseline", "fedavg")))
 
+    device = str(client_data.get("training", {}).get("device", "cpu"))
+
     return {
         "host": host,
         "port": port,
@@ -62,6 +64,7 @@ def load_launch_config(
         "rounds": rounds,
         "epochs": epochs,
         "baseline": baseline,
+        "device": device,
         "dataset": dataset_name,
         "partition": partition,
         "alpha": alpha,
@@ -176,12 +179,15 @@ def launch_windows(
     commands = build_launch_commands(cfg)
     root = repo_root or Path.cwd()
 
+    from src.utils.hardware import get_hardware_summary
     baseline_raw = str(cfg.get("baseline", "fedavg")).strip()
     baseline_name = "FedAvg" if baseline_raw.lower() == "fedavg" else baseline_raw.upper()
+    hardware_summary = get_hardware_summary(str(cfg.get("device", "cpu")))
 
     print("\n" + "=" * 65)
     print("      FEDERATED LEARNING LAB - MULTI-TERMINAL LAUNCHER")
     print(f"      Baseline Method: {baseline_name}")
+    print(f"      Hardware:        {hardware_summary}")
     print(f"      Server Address:  {cfg['host']}:{cfg['port']}")
     print(f"      Clients: {cfg['num_clients']} | Rounds: {cfg['rounds']} | Epochs: {cfg['epochs']}")
     print(f"      Working Dir:     {root}")

@@ -95,4 +95,5 @@ def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFi
     launch_windows(cfg, dry_run=True, plot=False)
     captured = capsys.readouterr().out
     assert "Baseline Method:" in captured
+    assert "Hardware:" in captured
     assert "FedAvg" in captured

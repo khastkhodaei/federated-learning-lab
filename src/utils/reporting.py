@@ -72,8 +72,10 @@ def save_baseline_report(
     plot_path = target_dir / "training_curves.png"
 
     # 1. Build and serialize structured JSON
+    from src.utils.hardware import get_hardware_summary
     report_data = {
         "baseline": clean_baseline,
+        "hardware": get_hardware_summary(),
         "timestamp": datetime.now().isoformat(),
         "total_rounds": len(round_history),
         "rounds": round_history,

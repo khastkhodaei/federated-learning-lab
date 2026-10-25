@@ -8,11 +8,11 @@ executes local epochs on its private data, and transmits updated weights back ov
 import argparse
 import logging
 import sys
-import time
 from pathlib import Path
-import yaml
 
+import yaml
 from fl_data_generator import FederatedDataset
+
 from src.client.config import (
     create_criterion,
     create_model,
@@ -67,6 +67,17 @@ def main() -> None:
     if args.lr is not None:
         cfg.training.learning_rate = args.lr
 
+    baseline_name = args.baseline
+    if not baseline_name:
+        cfg_p = Path(args.config)
+        if cfg_p.is_file():
+            with open(cfg_p, "r", encoding="utf-8") as f:
+                raw_yaml = yaml.safe_load(f) or {}
+                baseline_name = raw_yaml.get("baseline", "fedavg")
+        else:
+            baseline_name = "fedavg"
+    baseline_name = str(baseline_name).lower()
+
     logging.basicConfig(
         level=logging.INFO,
         format=f"[%(asctime)s] [{node_id.upper()}] %(levelname)s: %(message)s",
@@ -74,8 +85,12 @@ def main() -> None:
     )
     logger = logging.getLogger(node_id)
 
+    from src.utils.hardware import get_hardware_summary
+    hw_info = get_hardware_summary(cfg.training.device)
+
     print("\n" + "=" * 65)
     print(f"       FEDERATED LEARNING LAB - CLIENT NODE: {node_id}")
+    print(f"       Baseline: {baseline_name.upper()} | Hardware: {hw_info}")
     print(f"       Partition: {cfg.dataset.name} ({cfg.dataset.partition}, alpha={cfg.dataset.alpha}) | Client {args.id + 1}/{cfg.dataset.num_clients}")
     print(f"       Server Address: {cfg.server_address}")
     print("=" * 65 + "\n")
@@ -106,16 +121,7 @@ def main() -> None:
     logger.info("Connecting to central coordinator at %s...", cfg.server_address)
     transport = FederatedClient(target=cfg.server_address)
 
-    baseline_name = args.baseline
-    if not baseline_name:
-        cfg_p = Path(args.config)
-        if cfg_p.is_file():
-            with open(cfg_p, "r", encoding="utf-8") as f:
-                raw_yaml = yaml.safe_load(f) or {}
-                baseline_name = raw_yaml.get("baseline", "fedavg")
-        else:
-            baseline_name = "fedavg"
-    baseline_name = str(baseline_name).lower()
+
 
     from src.baselines import get_baseline
     _, trainer_cls = get_baseline(baseline_name)

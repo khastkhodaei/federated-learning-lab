@@ -7,9 +7,9 @@ training rounds with FedAvg aggregation.
 
 import argparse
 import logging
-import sys
 import time
 from pathlib import Path
+
 import yaml
 
 from src.models.cnn import SimpleCNN
@@ -43,6 +43,7 @@ def main() -> None:
     rounds = args.rounds if args.rounds is not None else int(cfg_data.get("rounds", 3))
     epochs = args.epochs if args.epochs is not None else int(cfg_data.get("epochs_per_round", 1))
     seed = args.seed if args.seed is not None else int(cfg_data.get("model", {}).get("seed", 42))
+    baseline_name = (args.baseline or cfg_data.get("baseline", "fedavg")).lower()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -51,8 +52,12 @@ def main() -> None:
     )
     logger = logging.getLogger("server")
 
+    from src.utils.hardware import get_hardware_summary
+    hw_info = get_hardware_summary()
+
     print("\n" + "=" * 65)
     print("       FEDERATED LEARNING LAB - CENTRAL COORDINATOR SERVER")
+    print(f"       Baseline: {baseline_name.upper()} | Hardware: {hw_info}")
     print(f"       Port: {port} | Required Clients: {num_clients} | Rounds: {rounds} | Epochs: {epochs}")
     print(f"       Config: {args.config}")
     print("=" * 65 + "\n")
@@ -63,7 +68,6 @@ def main() -> None:
     logger.info("Global model initialized (%d bytes).", len(initial_weights))
 
     from src.baselines import get_baseline
-    baseline_name = (args.baseline or cfg_data.get("baseline", "fedavg")).lower()
     strategy_cls, _ = get_baseline(baseline_name)
     strategy = strategy_cls()
     logger.info("Configured baseline aggregation strategy: %s (%s)", baseline_name, strategy_cls.__name__)
@@ -113,7 +117,10 @@ def main() -> None:
             successful = [res for res in responses if res.success]
             total_samples = sum(res.num_samples for res in successful)
 
-            from src.utils.reporting import parse_client_message_metrics, save_baseline_report
+            from src.utils.reporting import (
+                parse_client_message_metrics,
+                save_baseline_report,
+            )
 
             client_metrics = {}
             weighted_loss_sum = 0.0
