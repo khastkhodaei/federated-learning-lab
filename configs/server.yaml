@@ -1,6 +1,7 @@
 host: "127.0.0.1"
 port: 50051
 num_clients: 12
+baseline: 'fedavg'
 
 model:
   name: "simple_cnn"

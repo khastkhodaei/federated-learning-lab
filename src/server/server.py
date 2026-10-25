@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 import grpc
 import torch.nn as nn
 from src.server.aggregation import fedavg_bytes
+from src.baselines.base import ServerStrategy
 from src.server.service import FederatedServerServicer
 from src.transport.federated_pb2 import TrainRequest, TrainResponse
 from src.transport.federated_pb2_grpc import (
@@ -31,6 +32,7 @@ class FederatedServer:
         model: Optional[nn.Module] = None,
         seed: Optional[int] = None,
         servicer: Optional[FederatedServerServicer] = None,
+        strategy: Optional[ServerStrategy] = None,
         max_workers: int = 10,
     ) -> None:
         self.host = host
@@ -45,6 +47,11 @@ class FederatedServer:
         else:
             self.global_model = None
 
+        if strategy is not None:
+            self.strategy = strategy
+        else:
+            from src.baselines.fedavg.strategy import FedAvgServerStrategy
+            self.strategy = FedAvgServerStrategy()
         self.servicer = servicer if servicer is not None else FederatedServerServicer()
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         add_FederatedServiceServicer_to_server(self.servicer, self.server)
@@ -137,12 +144,12 @@ class FederatedServer:
         )
 
         if aggregate:
-            self.aggregate_responses(responses)
+            self.aggregate_responses(responses, round_id=round_id)
 
         return responses
 
-    def aggregate_responses(self, responses: List[TrainResponse]) -> Optional[bytes]:
-        """Aggregates successful TrainRound responses using FedAvg and updates the global model.
+    def aggregate_responses(self, responses: List[TrainResponse], round_id: int = 1) -> Optional[bytes]:
+        """Aggregates successful TrainRound responses using the configured strategy and updates the global model.
 
         Returns:
             Serialized aggregated parameter bytes, or None if no valid updates.
@@ -156,13 +163,16 @@ class FederatedServer:
             logger.warning("No successful client updates with weights to aggregate.")
             return None
 
-        aggregated_bytes = fedavg_bytes(valid_updates)
-        if self.global_model is not None:
-            load_bytes_into_model(aggregated_bytes, self.global_model)
-            logger.info(
-                "Server global model updated via FedAvg aggregation (%d bytes).",
-                len(aggregated_bytes),
-            )
+        aggregated_bytes = self.strategy.aggregate(
+            global_model=self.global_model,
+            client_updates=valid_updates,
+            round_id=round_id,
+        )
+        logger.info(
+            "Server global model updated via %s aggregation (%d bytes).",
+            self.strategy.__class__.__name__,
+            len(aggregated_bytes),
+        )
         return aggregated_bytes
 
 

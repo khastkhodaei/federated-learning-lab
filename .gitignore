@@ -32,3 +32,9 @@ runs/
 
 # Environment variables
 .env
+
+# Pytest & Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/

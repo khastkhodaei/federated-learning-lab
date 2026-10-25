@@ -13,6 +13,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from src.client.service import ClientNodeServicer
 from src.transport.client import FederatedClient
+from src.baselines.base import ClientTrainer
 from src.transport.federated_pb2 import (
     RegisterResponse,
     TrainRequest,
@@ -44,6 +45,7 @@ class Node:
         device: Union[str, torch.device] = "cpu",
         host: str = "127.0.0.1",
         port: Optional[int] = None,
+        trainer: Optional[ClientTrainer] = None,
         max_workers: int = 5,
     ) -> None:
         self.node_id = str(node_id)
@@ -61,6 +63,11 @@ class Node:
                 params, lr=self.lr, momentum=0.9
             )
 
+        if trainer is not None:
+            self.trainer = trainer
+        else:
+            from src.baselines.fedavg.trainer import FedAvgClientTrainer
+            self.trainer = FedAvgClientTrainer()
         self.host = host
         self.port = port
 
@@ -117,8 +124,10 @@ class Node:
             return response
         return None
 
-    def train_local(self, epochs: int = 1) -> Tuple[bytes, int]:
-        """Executes local gradient descent on self.data for the specified epochs.
+    def train_local(
+        self, epochs: int = 1, global_weights: Optional[bytes] = None
+    ) -> Tuple[bytes, int]:
+        """Executes local training on self.data using the configured ClientTrainer.
 
         Returns:
             Tuple of (serialized_updated_weights, num_samples_trained).
@@ -127,21 +136,16 @@ class Node:
             weights = model_to_bytes(self.model) if self.model is not None else b""
             return weights, 0
 
-        self.model.train()
         optimizer = self._optimizer_fn(self.model.parameters())
-        total_samples = 0
-
-        for _ in range(epochs):
-            for batch in self.data:
-                inputs, targets = batch[0].to(self.device), batch[1].to(self.device)
-                optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
-                total_samples += targets.size(0)
-
-        updated_weights = model_to_bytes(self.model)
+        updated_weights, total_samples, metrics = self.trainer.train(
+            model=self.model,
+            dataloader=self.data,
+            epochs=epochs,
+            criterion=self.criterion,
+            optimizer=optimizer,
+            device=self.device,
+            global_weights=global_weights,
+        )
         return updated_weights, total_samples
 
     def on_train_round(self, request: TrainRequest) -> TrainResponse:
@@ -171,7 +175,7 @@ class Node:
         # 2. Run local gradient descent training if data and model are present
         epochs = max(1, request.epochs)
         if self.model is not None and self.data is not None:
-            updated_weights, num_samples = self.train_local(epochs=epochs)
+            updated_weights, num_samples = self.train_local(epochs=epochs, global_weights=request.weights)
         elif self.model is not None:
             updated_weights, num_samples = model_to_bytes(self.model), 0
         else:

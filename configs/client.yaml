@@ -4,11 +4,12 @@
 server_address: "127.0.0.1:50051"
 client_host: "127.0.0.1"
 client_port: 0
+baseline: 'fedavg'
 
 dataset:
   name: "cifar10"
   partition: "dirichlet"
-  alpha: 0.5
+  alpha: 1000
   batch_size: 32
   data_dir: "./data"
   seed: 42

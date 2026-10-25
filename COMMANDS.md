@@ -68,11 +68,12 @@ python run_server.py --config configs/server.yaml
 - `--clients 10`: Number of registered clients required before triggering rounds
 - `--rounds 3`: Number of training rounds
 - `--epochs 1`: Local client epochs per round
+- `--baseline fedavg`: Aggregation baseline strategy (e.g. `fedavg`, `fedprox`)
 
 ### Step 2: Start Client Nodes (Terminals 2, 3, ...)
 ```powershell
-# Start Client 0
-python run_client.py --id 0 --server 127.0.0.1:50051
+# Start Client 0 (supports --baseline fedavg)
+python run_client.py --id 0 --server 127.0.0.1:50051 --baseline fedavg
 
 # Start Client 1
 python run_client.py --id 1 --server 127.0.0.1:50051
@@ -106,6 +107,7 @@ All runtime behaviors are config-driven via YAML:
   host: "127.0.0.1"
   port: 50051
   num_clients: 10
+  baseline: "fedavg"
   rounds: 3
   epochs_per_round: 1
   ```
@@ -137,4 +139,15 @@ pytest tests/test_launch_terminals.py
 pytest tests/test_plotting.py
 pytest tests/test_grpc_integration.py
 pytest tests/test_aggregation.py
+pytest tests/test_baselines_fedavg.py
 ```
+
+
+---
+
+## 7. Federated Learning Baselines Architecture
+
+All federated learning algorithms implement narrow Strategy seams defined in `src/baselines/base.py`:
+- **`ServerStrategy`**: Interface for coordinating server aggregation (`aggregate(global_model, client_updates, round_id, **kwargs)`).
+- **`ClientTrainer`**: Interface for local client training (`train(model, dataloader, epochs, criterion, optimizer, device, global_weights, **kwargs)`).
+- **Registry**: `src/baselines/` exports `get_baseline("fedavg")` to instantiate strategy and trainer pairs dynamically based on CLI or configuration.

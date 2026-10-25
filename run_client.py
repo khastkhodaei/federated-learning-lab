@@ -38,6 +38,7 @@ def main() -> None:
     parser.add_argument("--alpha", type=float, default=None, help="Dirichlet alpha parameter for label skew")
     parser.add_argument("--batch-size", "-b", type=int, default=None, help="Local training batch size")
     parser.add_argument("--lr", type=float, default=None, help="Local learning rate")
+    parser.add_argument("--baseline", type=str, default=None, help="Baseline local training algorithm (default: fedavg)")
     args = parser.parse_args()
 
     node_id = f"client_{args.id}"
@@ -105,6 +106,22 @@ def main() -> None:
     logger.info("Connecting to central coordinator at %s...", cfg.server_address)
     transport = FederatedClient(target=cfg.server_address)
 
+    baseline_name = args.baseline
+    if not baseline_name:
+        cfg_p = Path(args.config)
+        if cfg_p.is_file():
+            with open(cfg_p, "r", encoding="utf-8") as f:
+                raw_yaml = yaml.safe_load(f) or {}
+                baseline_name = raw_yaml.get("baseline", "fedavg")
+        else:
+            baseline_name = "fedavg"
+    baseline_name = str(baseline_name).lower()
+
+    from src.baselines import get_baseline
+    _, trainer_cls = get_baseline(baseline_name)
+    trainer = trainer_cls()
+    logger.info("Configured baseline client trainer: %s (%s)", baseline_name, trainer_cls.__name__)
+
     node = Node(
         node_id=node_id,
         model=model,
@@ -113,6 +130,7 @@ def main() -> None:
         optimizer_fn=optimizer_fn,
         transport=transport,
         port=cfg.client_port,
+        trainer=trainer,
     )
     logger.info("Listening for server RPCs on %s", node.address)
 

@@ -28,6 +28,7 @@ def main() -> None:
     parser.add_argument("--rounds", "-r", type=int, default=None, help="Number of federated training rounds (overrides config)")
     parser.add_argument("--epochs", "-e", type=int, default=None, help="Local epochs per round (overrides config)")
     parser.add_argument("--seed", "-s", type=int, default=None, help="Global model random seed (overrides config)")
+    parser.add_argument("--baseline", type=str, default=None, help="Baseline aggregation strategy (default: fedavg)")
     args = parser.parse_args()
 
     # Load defaults from config file if available
@@ -61,7 +62,13 @@ def main() -> None:
     initial_weights = model_to_bytes(global_model)
     logger.info("Global model initialized (%d bytes).", len(initial_weights))
 
-    server = FederatedServer(host="0.0.0.0", port=port, model=global_model)
+    from src.baselines import get_baseline
+    baseline_name = (args.baseline or cfg_data.get("baseline", "fedavg")).lower()
+    strategy_cls, _ = get_baseline(baseline_name)
+    strategy = strategy_cls()
+    logger.info("Configured baseline aggregation strategy: %s (%s)", baseline_name, strategy_cls.__name__)
+
+    server = FederatedServer(host="0.0.0.0", port=port, model=global_model, strategy=strategy)
     server.start()
     logger.info("Central Server is listening on 0.0.0.0:%d", server.bound_port)
 
