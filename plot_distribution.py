@@ -49,7 +49,7 @@ def main() -> None:
 
     ds_cfg = client_data.get("dataset", {})
 
-    num_clients = args.clients if args.clients is not None else int(server_data.get("num_clients", ds_cfg.get("num_clients", 10)))
+    num_clients = args.clients if args.clients is not None else int(server_data.get("num_clients", ds_cfg.get("num_clients", 3)))
     dataset_name = args.dataset if args.dataset is not None else str(ds_cfg.get("name", "cifar10"))
     partition = args.partition if args.partition is not None else str(ds_cfg.get("partition", "dirichlet"))
     alpha = args.alpha if args.alpha is not None else float(ds_cfg.get("alpha", 0.5))

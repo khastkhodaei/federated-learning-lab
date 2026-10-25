@@ -114,17 +114,21 @@ def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def generate_distribution_chart(cfg: dict[str, Any], output_path: str | None = None) -> Path:
+def generate_distribution_chart(
+    cfg: dict[str, Any],
+    output_path: str | None = None,
+    output_dir: str | Path = "reports",
+) -> Path:
     """Generates and saves the client data distribution chart inside the baseline reports folder."""
     baseline = str(cfg.get("baseline", "fedavg")).lower().strip()
     dataset = str(cfg.get("dataset") or cfg.get("dataset_name") or "cifar10")
     partition = str(cfg.get("partition", "dirichlet"))
     alpha = float(cfg.get("alpha", 0.5))
     seed = int(cfg.get("seed", 42))
-    num_clients = int(cfg.get("num_clients", 2))
+    num_clients = int(cfg.get("num_clients", 3))
 
     if output_path is None:
-        out_path = Path("reports") / baseline / "data_distribution.png"
+        out_path = Path(output_dir) / baseline / "data_distribution.png"
     else:
         out_path = Path(output_path)
 

@@ -82,20 +82,20 @@ def test_generate_distribution_chart_defaults_to_baseline_dir() -> None:
 
 
 def test_generate_distribution_chart_does_not_create_distributions_dir() -> None:
-    with tempfile.TemporaryDirectory():
+    with tempfile.TemporaryDirectory() as tmp_dir:
         cfg = {
-            "num_clients": 2,
+            "num_clients": 3,
             "dataset_name": "cifar10",
             "partition": "iid",
             "alpha": 0.5,
             "seed": 42,
             "baseline": "fedavg",
         }
-        out_file = generate_distribution_chart(cfg)
+        out_file = generate_distribution_chart(cfg, output_dir=tmp_dir)
         assert out_file.is_file()
-        assert out_file == Path("reports/fedavg/data_distribution.png")
-        assert not Path("reports/distributions").exists()
-        assert not Path("reports/data_distribution.png").exists()
+        assert out_file == Path(tmp_dir) / "fedavg" / "data_distribution.png"
+        assert not (Path(tmp_dir) / "distributions").exists()
+        assert not (Path(tmp_dir) / "data_distribution.png").exists()
 
 
 def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFixture[str]) -> None:

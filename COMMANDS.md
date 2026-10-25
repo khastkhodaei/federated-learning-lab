@@ -171,4 +171,4 @@ reports/
 ```
 
 - **Data Partition Chart**: Automatically generated prior to training launch (`reports/<baseline>/data_distribution.png`).
-- **Baseline Run Metrics**: When the central server completes all training rounds, it parses client responses and writes `reports/<baseline>/metrics.json` and renders `reports/<baseline>/training_curves.png`.
+- **Baseline Run Metrics**: When the central server completes all training rounds, it parses client responses and writes `reports/<baseline>/metrics.json` and renders `reports/<baseline>/loss_curve.png`, `reports/<baseline>/round_duration.png`, `reports/<baseline>/accuracy_curves.png`, and `reports/<baseline>/client_dispersion.png`.

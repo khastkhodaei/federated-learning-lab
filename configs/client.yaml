@@ -13,6 +13,7 @@ dataset:
   batch_size: 32
   data_dir: "./data"
   seed: 42
+  num_clients: 3
 
 model:
   name: "simple_cnn"

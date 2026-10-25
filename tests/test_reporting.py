@@ -95,3 +95,14 @@ def test_save_baseline_report_supports_different_baselines() -> None:
             assert (Path(tmp_dir) / baseline / "metrics.json").is_file()
             assert (Path(tmp_dir) / baseline / "loss_curve.png").is_file()
             assert (Path(tmp_dir) / baseline / "round_duration.png").is_file()
+
+
+def test_save_baseline_report_does_not_generate_training_curves() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        artifacts = save_baseline_report(
+            baseline_name="fedavg",
+            round_history=[{"round": 1, "duration_seconds": 1.0, "total_samples": 10, "weighted_loss": 0.5}],
+            output_dir=tmp_dir,
+        )
+        assert "training_curves" not in artifacts
+        assert not (Path(tmp_dir) / "fedavg" / "training_curves.png").exists()

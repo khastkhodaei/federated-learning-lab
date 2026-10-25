@@ -67,7 +67,7 @@ def save_baseline_report(
 
     Returns:
         Dict mapping artifact keys ('metrics_json', 'loss_curve', 'round_duration',
-        'accuracy_curves', 'client_dispersion', 'training_curves') to their absolute file paths.
+        'accuracy_curves', 'client_dispersion') to their absolute file paths.
     """
     clean_baseline = baseline_name.lower().strip()
     target_dir = Path(output_dir) / clean_baseline
@@ -78,7 +78,6 @@ def save_baseline_report(
     duration_path = target_dir / "round_duration.png"
     acc_path = target_dir / "accuracy_curves.png"
     dispersion_path = target_dir / "client_dispersion.png"
-    combined_path = target_dir / "training_curves.png"
 
     # 1. Build and serialize structured JSON
     from src.utils.hardware import get_hardware_summary
@@ -252,55 +251,6 @@ def save_baseline_report(
     plt.savefig(dispersion_path, bbox_inches="tight")
     plt.close(fig_disp)
 
-    # 6. Render 2-panel combined plot (backward compatibility)
-    fig_comb, (ax_c_loss, ax_c_time) = plt.subplots(
-        1, 2, figsize=(12, 4.5), dpi=150
-    )
-    ax_c_loss.plot(
-        rounds,
-        losses,
-        marker="o",
-        color="#1f77b4",
-        linewidth=2.2,
-        markersize=6,
-        label=f"{clean_baseline.upper()} Loss",
-    )
-    ax_c_loss.set_title(
-        f"{clean_baseline.upper()} - Training Loss vs. Round",
-        fontsize=12,
-        fontweight="bold",
-    )
-    ax_c_loss.set_xlabel("Federated Round", fontsize=10)
-    ax_c_loss.set_ylabel("Weighted Cross-Entropy Loss", fontsize=10)
-    ax_c_loss.grid(True, linestyle="--", alpha=0.6)
-    if rounds:
-        ax_c_loss.set_xticks(rounds)
-    ax_c_loss.legend(frameon=True)
-
-    ax_c_time.bar(
-        rounds,
-        durations,
-        color="#2ca02c",
-        alpha=0.75,
-        width=0.5,
-        edgecolor="#1b611b",
-        label="Round Duration (s)",
-    )
-    ax_c_time.set_title(
-        f"{clean_baseline.upper()} - Round Duration & Communication",
-        fontsize=12,
-        fontweight="bold",
-    )
-    ax_c_time.set_xlabel("Federated Round", fontsize=10)
-    ax_c_time.set_ylabel("Duration (seconds)", fontsize=10)
-    ax_c_time.grid(True, linestyle="--", alpha=0.6, axis="y")
-    if rounds:
-        ax_c_time.set_xticks(rounds)
-    ax_c_time.legend(frameon=True)
-
-    plt.tight_layout()
-    plt.savefig(combined_path, bbox_inches="tight")
-    plt.close(fig_comb)
 
     return {
         "metrics_json": str(json_path),
@@ -308,5 +258,4 @@ def save_baseline_report(
         "round_duration": str(duration_path),
         "accuracy_curves": str(acc_path),
         "client_dispersion": str(dispersion_path),
-        "training_curves": str(combined_path),
     }
