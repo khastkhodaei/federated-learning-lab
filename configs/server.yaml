@@ -7,5 +7,5 @@ model:
   name: "simple_cnn"
   seed: 42
 
-rounds: 3
+rounds: 10
 epochs_per_round: 1

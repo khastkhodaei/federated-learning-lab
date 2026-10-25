@@ -176,11 +176,15 @@ def launch_windows(
     commands = build_launch_commands(cfg)
     root = repo_root or Path.cwd()
 
+    baseline_raw = str(cfg.get("baseline", "fedavg")).strip()
+    baseline_name = "FedAvg" if baseline_raw.lower() == "fedavg" else baseline_raw.upper()
+
     print("\n" + "=" * 65)
     print("      FEDERATED LEARNING LAB - MULTI-TERMINAL LAUNCHER")
-    print(f"      Server Address: {cfg['host']}:{cfg['port']}")
+    print(f"      Baseline Method: {baseline_name}")
+    print(f"      Server Address:  {cfg['host']}:{cfg['port']}")
     print(f"      Clients: {cfg['num_clients']} | Rounds: {cfg['rounds']} | Epochs: {cfg['epochs']}")
-    print(f"      Working Dir: {root}")
+    print(f"      Working Dir:     {root}")
     print("=" * 65 + "\n")
 
     # Generate data distribution chart if requested

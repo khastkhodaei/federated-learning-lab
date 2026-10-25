@@ -1,11 +1,13 @@
 import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 from launch_terminals import (
     build_launch_commands,
     generate_distribution_chart,
+    launch_windows,
     load_launch_config,
 )
 
@@ -77,3 +79,20 @@ def test_generate_distribution_chart_defaults_to_baseline_dir() -> None:
         out_file = generate_distribution_chart(cfg, output_path=str(expected_path))
         assert out_file.is_file()
         assert out_file == expected_path
+
+
+def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFixture[str]) -> None:
+    cfg = {
+        "host": "127.0.0.1",
+        "port": 50051,
+        "num_clients": 2,
+        "rounds": 3,
+        "epochs": 1,
+        "baseline": "fedavg",
+        "server_config": "configs/server.yaml",
+        "client_config": "configs/client.yaml",
+    }
+    launch_windows(cfg, dry_run=True, plot=False)
+    captured = capsys.readouterr().out
+    assert "Baseline Method:" in captured
+    assert "FedAvg" in captured
