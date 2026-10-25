@@ -71,6 +71,7 @@ class Node:
             self.trainer = trainer
         else:
             from src.baselines.fedavg.trainer import FedAvgClientTrainer
+
             self.trainer = FedAvgClientTrainer()
         self.host = host
         self.port = port
@@ -191,7 +192,8 @@ class Node:
 
         1. Unpacks received global weights into self.model at the start of the round.
         2. Executes local training on self.data for request.epochs.
-        3. Returns the updated weights and sample count directly in TrainResponse.
+        3. Evaluates updated model on local test set.
+        4. Returns updated weights and metrics in TrainResponse.
         """
         logger.info(
             "Node %s starting round %d (epochs: %d, received weights: %d bytes)",
@@ -236,10 +238,15 @@ class Node:
             num_samples,
         )
 
-        loss_val = metrics.get("loss", 0.0)
-        msg = f"loss={loss_val:.6f};epochs={epochs};samples={num_samples}"
+        # 3. Evaluate local test partition
+        eval_metrics = self.evaluate_local()
+        test_acc = float(eval_metrics.get("accuracy", 0.0))
+        test_loss = float(eval_metrics.get("loss", 0.0))
 
-        # 3. Return updated weights directly over gRPC
+        loss_val = metrics.get("loss", 0.0)
+        msg = f"loss={loss_val:.6f};epochs={epochs};samples={num_samples};test_acc={test_acc:.4f};test_loss={test_loss:.6f}"
+
+        # 4. Return updated weights directly over gRPC
         return TrainResponse(
             node_id=str(self.node_id),
             num_samples=num_samples,

@@ -14,6 +14,33 @@ from torchvision import datasets
 from src.datasets.transforms import get_default_transform
 
 
+def parse_client_metrics(message: str) -> dict[str, float]:
+    """Parses key-value metric pairs formatted as 'key1=val1;key2=val2' from TrainResponse.message.
+
+    Args:
+        message: Semi-colon separated key-value string.
+
+    Returns:
+        Dictionary mapping metric names to parsed float values.
+    """
+    metrics: dict[str, float] = {}
+    if not message or not isinstance(message, str):
+        return metrics
+
+    for part in message.split(";"):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        key, val = part.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        try:
+            metrics[key] = float(val)
+        except ValueError:
+            pass
+    return metrics
+
+
 def evaluate_model(
     model: nn.Module,
     dataloader: DataLoader,
