@@ -103,7 +103,7 @@ def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def generate_distribution_chart(cfg: Dict[str, Any], output_path: str = "reports/data_distribution.png") -> Path:
+def generate_distribution_chart(cfg: Dict[str, Any], output_path: str = "reports/distributions/data_distribution.png") -> Path:
     """Generates and saves the client data distribution chart based on configuration."""
     print(f"Generating data distribution chart for {cfg['num_clients']} clients ({cfg['dataset']}, {cfg['partition']})...")
     fed_dataset = FederatedDataset(

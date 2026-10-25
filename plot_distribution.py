@@ -30,7 +30,7 @@ def main() -> None:
     parser.add_argument("--dataset", "-d", type=str, default=None, help="Dataset: cifar10, mnist, fashion_mnist")
     parser.add_argument("--partition", "-p", type=str, default=None, help="Partition: dirichlet, iid, pathological, quantity")
     parser.add_argument("--alpha", "-a", type=float, default=None, help="Dirichlet alpha parameter")
-    parser.add_argument("--output", "-o", type=str, default="reports/data_distribution.png", help="Output image file path")
+    parser.add_argument("--output", "-o", type=str, default="reports/distributions/data_distribution.png", help="Output image file path")
     parser.add_argument("--interactive", action="store_true", help="Display plot interactively in a window")
     args = parser.parse_args()
 

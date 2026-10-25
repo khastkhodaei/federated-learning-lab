@@ -38,7 +38,7 @@ python launch_terminals.py --no-plot
 Generates a stacked bar chart displaying sample volumes (**Quantity Skew**) and color-coded class proportions (**Label Skew**) across all participating clients.
 
 ```powershell
-# Generate and save chart to reports/data_distribution.png (reads configs/server.yaml)
+# Generate and save chart to reports/distributions/data_distribution.png (reads configs/server.yaml)
 python plot_distribution.py
 
 # Display chart in an interactive pop-up window
@@ -151,3 +151,23 @@ All federated learning algorithms implement narrow Strategy seams defined in `sr
 - **`ServerStrategy`**: Interface for coordinating server aggregation (`aggregate(global_model, client_updates, round_id, **kwargs)`).
 - **`ClientTrainer`**: Interface for local client training (`train(model, dataloader, epochs, criterion, optimizer, device, global_weights, **kwargs)`).
 - **Registry**: `src/baselines/` exports `get_baseline("fedavg")` to instantiate strategy and trainer pairs dynamically based on CLI or configuration.
+
+
+---
+
+## 8. Experiment Reports & Visualization Structure
+
+All runs automatically generate isolated, publication-ready reports organized by concern:
+
+```
+reports/
+├── distributions/
+│   └── data_distribution.png        # Shared dataset partition chart (Quantity & Label Skew)
+│
+└── <baseline_name>/                  # e.g., fedavg/, fedprox/, scaffold/
+    ├── metrics.json                 # Structured round-by-round losses, sample totals, and durations
+    └── training_curves.png          # 2-panel chart: Loss Convergence & Round Duration
+```
+
+- **Data Partition Chart**: Automatically generated prior to training launch (`reports/distributions/data_distribution.png`).
+- **Baseline Run Metrics**: When the central server completes all training rounds, it parses client responses and writes `reports/<baseline>/metrics.json` and renders `reports/<baseline>/training_curves.png`.

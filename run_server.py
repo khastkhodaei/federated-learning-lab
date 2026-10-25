@@ -88,6 +88,7 @@ def main() -> None:
         time.sleep(1)
 
     try:
+        round_history = []
         for r in range(1, rounds + 1):
             print("\n" + "-" * 55)
             logger.info(">>> STARTING FEDERATED ROUND %d / %d", r, rounds)
@@ -112,27 +113,58 @@ def main() -> None:
             successful = [res for res in responses if res.success]
             total_samples = sum(res.num_samples for res in successful)
 
+            from src.utils.reporting import parse_client_message_metrics, save_baseline_report
+
+            client_metrics = {}
+            weighted_loss_sum = 0.0
+            loss_samples = 0
+
             for res in successful:
+                parsed = parse_client_message_metrics(res.message)
+                c_loss = parsed.get("loss", 0.0)
+                client_metrics[res.node_id] = {"samples": res.num_samples, "loss": round(c_loss, 4)}
+                if c_loss > 0:
+                    weighted_loss_sum += c_loss * res.num_samples
+                    loss_samples += res.num_samples
+
                 logger.info(
-                    "  [Update Received] Client '%s' submitted %d samples (%d bytes)",
+                    "  [Update Received] Client '%s' submitted %d samples (%d bytes, loss: %.4f)",
                     res.node_id,
                     res.num_samples,
                     len(res.weights),
+                    c_loss,
                 )
 
+            round_loss = (weighted_loss_sum / loss_samples) if loss_samples > 0 else 0.0
+
+            round_history.append({
+                "round": r,
+                "duration_seconds": round(elapsed, 2),
+                "total_samples": total_samples,
+                "weighted_loss": round(round_loss, 4),
+                "client_metrics": client_metrics,
+            })
+
             logger.info(
-                "Round %d completed in %.2fs: %d/%d clients reported (total samples: %d).",
+                "Round %d completed in %.2fs: %d/%d clients reported (total samples: %d, weighted loss: %.4f).",
                 r,
                 elapsed,
                 len(successful),
                 num_clients,
                 total_samples,
+                round_loss,
             )
-            logger.info("FedAvg aggregation complete. Global model updated for round %d.", r)
+            logger.info("%s aggregation complete. Global model updated for round %d.", strategy_cls.__name__, r)
 
         print("\n" + "=" * 65)
         logger.info("All %d federated training rounds completed successfully!", rounds)
         print("=" * 65 + "\n")
+
+        # Automatically save structured baseline report and training progression charts
+        artifacts = save_baseline_report(baseline_name=baseline_name, round_history=round_history)
+        logger.info("Baseline report artifacts generated successfully:")
+        logger.info("  [Metrics JSON]    %s", artifacts["metrics_json"])
+        logger.info("  [Training Curves] %s", artifacts["training_curves"])
 
     except KeyboardInterrupt:
         logger.info("Stopping server...")

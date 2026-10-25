@@ -174,8 +174,18 @@ class Node:
 
         # 2. Run local gradient descent training if data and model are present
         epochs = max(1, request.epochs)
+        metrics: dict[str, float] = {}
         if self.model is not None and self.data is not None:
-            updated_weights, num_samples = self.train_local(epochs=epochs, global_weights=request.weights)
+            optimizer = self._optimizer_fn(self.model.parameters())
+            updated_weights, num_samples, metrics = self.trainer.train(
+                model=self.model,
+                dataloader=self.data,
+                epochs=epochs,
+                criterion=self.criterion,
+                optimizer=optimizer,
+                device=self.device,
+                global_weights=request.weights,
+            )
         elif self.model is not None:
             updated_weights, num_samples = model_to_bytes(self.model), 0
         else:
@@ -188,13 +198,16 @@ class Node:
             num_samples,
         )
 
+        loss_val = metrics.get("loss", 0.0)
+        msg = f"loss={loss_val:.6f};epochs={epochs};samples={num_samples}"
+
         # 3. Return updated weights directly over gRPC
         return TrainResponse(
             node_id=str(self.node_id),
             num_samples=num_samples,
             weights=updated_weights,
             success=True,
-            message=f"Node {self.node_id} completed {epochs} epoch(s) for round {request.round_id}.",
+            message=msg,
         )
 
 
