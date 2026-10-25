@@ -6,6 +6,7 @@ top-1 accuracy, and sample counts on centralized or client test sets.
 
 from typing import Any
 
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -39,6 +40,32 @@ def parse_client_metrics(message: str) -> dict[str, float]:
         except ValueError:
             pass
     return metrics
+
+
+def compute_fairness_metrics(client_accuracies: list[float]) -> dict[str, float]:
+    """Calculates dispersion and fairness statistics for client local test accuracies.
+
+    Args:
+        client_accuracies: List of client test accuracies (in [0.0, 1.0]).
+
+    Returns:
+        Dictionary containing 'mean', 'std', 'worst_10', and 'best_10'.
+    """
+    if not client_accuracies:
+        return {"mean": 0.0, "std": 0.0, "worst_10": 0.0, "best_10": 0.0}
+
+    arr = np.array(client_accuracies, dtype=float)
+    mean_val = float(np.mean(arr))
+    std_val = float(np.std(arr)) if len(arr) > 1 else 0.0
+    worst_10 = float(np.percentile(arr, 10))
+    best_10 = float(np.percentile(arr, 90))
+
+    return {
+        "mean": mean_val,
+        "std": std_val,
+        "worst_10": worst_10,
+        "best_10": best_10,
+    }
 
 
 def evaluate_model(
