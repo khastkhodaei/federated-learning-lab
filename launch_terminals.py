@@ -6,16 +6,16 @@ terminal windows for the central server and each participating client node.
 """
 
 import argparse
-import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import yaml
-import matplotlib.pyplot as plt
+from typing import Any
 
+import matplotlib.pyplot as plt
+import yaml
 from fl_data_generator import FederatedDataset
+
 from src.utils.plotting import (
     DATASET_CLASS_NAMES,
     compute_client_class_distribution,
@@ -26,7 +26,7 @@ from src.utils.plotting import (
 def load_launch_config(
     server_config_path: str = "configs/server.yaml",
     client_config_path: str = "configs/client.yaml",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Loads and merges launch parameters from YAML files."""
     server_path = Path(server_config_path)
     client_path = Path(client_config_path)
@@ -53,6 +53,7 @@ def load_launch_config(
     partition = str(ds_cfg.get("partition", "dirichlet"))
     alpha = float(ds_cfg.get("alpha", 0.5))
     seed = int(ds_cfg.get("seed", 42))
+    baseline = str(server_data.get("baseline", client_data.get("baseline", "fedavg")))
 
     return {
         "host": host,
@@ -60,6 +61,7 @@ def load_launch_config(
         "num_clients": num_clients,
         "rounds": rounds,
         "epochs": epochs,
+        "baseline": baseline,
         "dataset": dataset_name,
         "partition": partition,
         "alpha": alpha,
@@ -69,9 +71,10 @@ def load_launch_config(
     }
 
 
-def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
     """Constructs command lines for the central server and all client nodes."""
     python_bin = sys.executable
+    baseline_flag = f" --baseline {cfg['baseline']}" if cfg.get("baseline") else ""
     server_cmd = (
         f"{python_bin} run_server.py "
         f"--config {cfg['server_config']} "
@@ -79,6 +82,7 @@ def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
         f"--clients {cfg['num_clients']} "
         f"--rounds {cfg['rounds']} "
         f"--epochs {cfg['epochs']}"
+        f"{baseline_flag}"
     )
 
     server_address = f"{cfg['host']}:{cfg['port']}"
@@ -90,6 +94,7 @@ def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
             f"--id {i} "
             f"--clients {cfg['num_clients']} "
             f"--server {server_address}"
+            f"{baseline_flag}"
         )
         clients.append({
             "id": i,
@@ -103,45 +108,70 @@ def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def generate_distribution_chart(cfg: Dict[str, Any], output_path: str = "reports/distributions/data_distribution.png") -> Path:
-    """Generates and saves the client data distribution chart based on configuration."""
-    print(f"Generating data distribution chart for {cfg['num_clients']} clients ({cfg['dataset']}, {cfg['partition']})...")
+def generate_distribution_chart(cfg: dict[str, Any], output_path: str | None = None) -> Path:
+    """Generates and saves the client data distribution chart inside the baseline reports folder."""
+    baseline = str(cfg.get("baseline", "fedavg")).lower().strip()
+    dataset = str(cfg.get("dataset") or cfg.get("dataset_name") or "cifar10")
+    partition = str(cfg.get("partition", "dirichlet"))
+    alpha = float(cfg.get("alpha", 0.5))
+    seed = int(cfg.get("seed", 42))
+    num_clients = int(cfg.get("num_clients", 2))
+
+    if output_path is None:
+        out_path = Path("reports") / baseline / "data_distribution.png"
+    else:
+        out_path = Path(output_path)
+
+    print(f"Generating data distribution chart for {num_clients} clients ({dataset}, {partition})...")
     fed_dataset = FederatedDataset(
-        dataset=cfg["dataset"],
+        dataset=dataset,
         data_dir="./data",
-        num_clients=cfg["num_clients"],
-        partition=cfg["partition"],
-        alpha=cfg["alpha"],
-        seed=cfg["seed"],
+        num_clients=num_clients,
+        partition=partition,
+        alpha=alpha,
+        seed=seed,
     )
 
     counts = compute_client_class_distribution(fed_dataset=fed_dataset)
     num_classes = counts.shape[1]
-    class_names = DATASET_CLASS_NAMES.get(cfg["dataset"].lower().strip(), [f"Class {i}" for i in range(num_classes)])
+    class_names = DATASET_CLASS_NAMES.get(dataset.lower().strip(), [f"Class {i}" for i in range(num_classes)])
 
     title = (
-        f"{cfg['dataset'].upper()} Data Distribution across {cfg['num_clients']} Clients\n"
-        f"Partition: {cfg['partition'].capitalize()} (alpha={cfg['alpha']}) | Total Samples: {len(fed_dataset):,}"
+        f"{dataset.upper()} Data Distribution across {num_clients} Clients ({baseline.upper()})\n"
+        f"Partition: {partition.capitalize()} (alpha={alpha}) | Total Samples: {len(fed_dataset):,}"
     )
 
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     fig = plot_client_distribution(
         counts=counts,
         class_names=class_names,
         title=title,
-        output_path=output_path,
+        output_path=str(out_path),
         show=False,
     )
     plt.close(fig)
-    print(f"Chart saved to: {output_path}")
-    return Path(output_path)
+
+    try:
+        # Dual-save to legacy/shared paths only when writing to the default reports/ directory
+        if "reports" in str(out_path.resolve()):
+            for legacy in [Path("reports/data_distribution.png"), Path("reports/distributions/data_distribution.png")]:
+                if legacy.resolve() != out_path.resolve():
+                    legacy.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copyfile(out_path, legacy)
+    except OSError:
+        pass
+
+    print(f"Chart saved to: {out_path}")
+    return out_path
 
 
 def launch_windows(
-    cfg: Dict[str, Any],
+    cfg: dict[str, Any],
     dry_run: bool = False,
     plot: bool = True,
-    repo_root: Optional[Path] = None,
-) -> List[subprocess.Popen]:
+    repo_root: Path | None = None,
+) -> list[subprocess.Popen]:
     """Launches server and client processes in individual terminal windows."""
     commands = build_launch_commands(cfg)
     root = repo_root or Path.cwd()
@@ -157,7 +187,7 @@ def launch_windows(
     if plot:
         try:
             generate_distribution_chart(cfg)
-        except Exception as exc:
+        except (OSError, RuntimeError) as exc:
             print(f"Warning: Could not generate distribution plot: {exc}")
 
     print("[1/2] Server Command:")
@@ -172,7 +202,7 @@ def launch_windows(
         print("Dry run completed. No terminal processes were spawned.")
         return []
 
-    processes: List[subprocess.Popen] = []
+    processes: list[subprocess.Popen] = []
 
     # 1. Spawn Server Terminal
     print(">>> Spawning Central Server terminal window...")

@@ -7,11 +7,12 @@ high-resolution stacked bar chart visualizing client data distribution.
 
 import argparse
 from pathlib import Path
-import yaml
-import numpy as np
-import matplotlib.pyplot as plt
 
+import matplotlib.pyplot as plt
+import numpy as np
+import yaml
 from fl_data_generator import FederatedDataset
+
 from src.utils.plotting import (
     DATASET_CLASS_NAMES,
     compute_client_class_distribution,
@@ -30,7 +31,8 @@ def main() -> None:
     parser.add_argument("--dataset", "-d", type=str, default=None, help="Dataset: cifar10, mnist, fashion_mnist")
     parser.add_argument("--partition", "-p", type=str, default=None, help="Partition: dirichlet, iid, pathological, quantity")
     parser.add_argument("--alpha", "-a", type=float, default=None, help="Dirichlet alpha parameter")
-    parser.add_argument("--output", "-o", type=str, default="reports/distributions/data_distribution.png", help="Output image file path")
+    parser.add_argument("--baseline", "-b", type=str, default=None, help="Baseline algorithm name (default: from config or fedavg)")
+    parser.add_argument("--output", "-o", type=str, default=None, help="Output image file path (defaults to reports/<baseline>/data_distribution.png)")
     parser.add_argument("--interactive", action="store_true", help="Display plot interactively in a window")
     args = parser.parse_args()
 
@@ -52,12 +54,14 @@ def main() -> None:
     partition = args.partition if args.partition is not None else str(ds_cfg.get("partition", "dirichlet"))
     alpha = args.alpha if args.alpha is not None else float(ds_cfg.get("alpha", 0.5))
     seed = int(ds_cfg.get("seed", 42))
+    baseline = (args.baseline or server_data.get("baseline", client_data.get("baseline", "fedavg"))).lower().strip()
+    out_path = Path(args.output) if args.output else Path("reports") / baseline / "data_distribution.png"
 
     print("\n" + "=" * 65)
     print("      FEDERATED LEARNING LAB - DATA DISTRIBUTION VISUALIZER")
     print(f"      Dataset: {dataset_name} | Partition: {partition} (alpha={alpha})")
-    print(f"      Clients: {num_clients} | Random Seed: {seed}")
-    print(f"      Output:  {args.output}")
+    print(f"      Clients: {num_clients} | Baseline: {baseline} | Random Seed: {seed}")
+    print(f"      Output:  {out_path}")
     print("=" * 65 + "\n")
 
     # 2. Partition dataset using fl-data-generator (v0.1.4)

@@ -157,16 +157,14 @@ All federated learning algorithms implement narrow Strategy seams defined in `sr
 
 ## 8. Experiment Reports & Visualization Structure
 
-All runs automatically generate isolated, publication-ready reports organized by concern:
+All runs automatically generate completely self-contained, publication-ready reports inside each baseline's directory:
 
 ```
 reports/
-├── distributions/
-│   └── data_distribution.png        # Shared dataset partition chart (Quantity & Label Skew)
-│
 └── <baseline_name>/                  # e.g., fedavg/, fedprox/, scaffold/
-    ├── metrics.json                 # Structured round-by-round losses, sample totals, and durations
-    └── training_curves.png          # 2-panel chart: Loss Convergence & Round Duration
+    ├── data_distribution.png        # The exact dataset partition chart for this baseline experiment
+    ├── training_curves.png          # 2-panel chart: Loss Convergence & Round Duration
+    └── metrics.json                 # Structured round-by-round losses, sample totals, and durations
 ```
 
 - **Data Partition Chart**: Automatically generated prior to training launch (`reports/distributions/data_distribution.png`).
