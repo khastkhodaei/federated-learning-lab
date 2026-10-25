@@ -1,8 +1,8 @@
 """Terminal orchestrator for Federated Learning Lab.
 
 Reads server and client configurations from YAML, parses IP, port, and number of clients,
-and automatically spawns separate, live terminal windows for the central server
-and each participating client node.
+automatically generates the client data distribution chart, and spawns separate, live
+terminal windows for the central server and each participating client node.
 """
 
 import argparse
@@ -13,21 +13,21 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import yaml
+import matplotlib.pyplot as plt
+
+from fl_data_generator import FederatedDataset
+from src.utils.plotting import (
+    DATASET_CLASS_NAMES,
+    compute_client_class_distribution,
+    plot_client_distribution,
+)
 
 
 def load_launch_config(
     server_config_path: str = "configs/server.yaml",
     client_config_path: str = "configs/client.yaml",
 ) -> Dict[str, Any]:
-    """Loads and merges launch parameters from YAML files.
-
-    Args:
-        server_config_path: Path to server.yaml.
-        client_config_path: Path to client.yaml.
-
-    Returns:
-        Dictionary containing resolved launch parameters.
-    """
+    """Loads and merges launch parameters from YAML files."""
     server_path = Path(server_config_path)
     client_path = Path(client_config_path)
 
@@ -41,11 +41,18 @@ def load_launch_config(
         with open(client_path, "r", encoding="utf-8") as f:
             client_data = yaml.safe_load(f) or {}
 
+    ds_cfg = client_data.get("dataset", {})
+
     host = str(server_data.get("host", "127.0.0.1"))
     port = int(server_data.get("port", 50051))
-    num_clients = int(server_data.get("num_clients", client_data.get("dataset", {}).get("num_clients", 2)))
+    num_clients = int(server_data.get("num_clients", ds_cfg.get("num_clients", 2)))
     rounds = int(server_data.get("rounds", 3))
     epochs = int(server_data.get("epochs_per_round", 1))
+
+    dataset_name = str(ds_cfg.get("name", "cifar10"))
+    partition = str(ds_cfg.get("partition", "dirichlet"))
+    alpha = float(ds_cfg.get("alpha", 0.5))
+    seed = int(ds_cfg.get("seed", 42))
 
     return {
         "host": host,
@@ -53,20 +60,17 @@ def load_launch_config(
         "num_clients": num_clients,
         "rounds": rounds,
         "epochs": epochs,
+        "dataset": dataset_name,
+        "partition": partition,
+        "alpha": alpha,
+        "seed": seed,
         "server_config": str(server_config_path),
         "client_config": str(client_config_path),
     }
 
 
 def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Constructs command lines for the central server and all client nodes.
-
-    Args:
-        cfg: Launch configuration dictionary.
-
-    Returns:
-        Dictionary with 'server' command and list of 'clients' commands.
-    """
+    """Constructs command lines for the central server and all client nodes."""
     python_bin = sys.executable
     server_cmd = (
         f"{python_bin} run_server.py "
@@ -99,21 +103,46 @@ def build_launch_commands(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def generate_distribution_chart(cfg: Dict[str, Any], output_path: str = "reports/data_distribution.png") -> Path:
+    """Generates and saves the client data distribution chart based on configuration."""
+    print(f"Generating data distribution chart for {cfg['num_clients']} clients ({cfg['dataset']}, {cfg['partition']})...")
+    fed_dataset = FederatedDataset(
+        dataset=cfg["dataset"],
+        data_dir="./data",
+        num_clients=cfg["num_clients"],
+        partition=cfg["partition"],
+        alpha=cfg["alpha"],
+        seed=cfg["seed"],
+    )
+
+    counts = compute_client_class_distribution(fed_dataset=fed_dataset)
+    num_classes = counts.shape[1]
+    class_names = DATASET_CLASS_NAMES.get(cfg["dataset"].lower().strip(), [f"Class {i}" for i in range(num_classes)])
+
+    title = (
+        f"{cfg['dataset'].upper()} Data Distribution across {cfg['num_clients']} Clients\n"
+        f"Partition: {cfg['partition'].capitalize()} (alpha={cfg['alpha']}) | Total Samples: {len(fed_dataset):,}"
+    )
+
+    fig = plot_client_distribution(
+        counts=counts,
+        class_names=class_names,
+        title=title,
+        output_path=output_path,
+        show=False,
+    )
+    plt.close(fig)
+    print(f"Chart saved to: {output_path}")
+    return Path(output_path)
+
+
 def launch_windows(
     cfg: Dict[str, Any],
     dry_run: bool = False,
+    plot: bool = True,
     repo_root: Optional[Path] = None,
 ) -> List[subprocess.Popen]:
-    """Launches server and client processes in individual terminal windows.
-
-    Args:
-        cfg: Launch configuration dictionary.
-        dry_run: If True, only prints commands without executing.
-        repo_root: Working directory root (defaults to current directory).
-
-    Returns:
-        List of created subprocesses (empty if dry_run).
-    """
+    """Launches server and client processes in individual terminal windows."""
     commands = build_launch_commands(cfg)
     root = repo_root or Path.cwd()
 
@@ -123,6 +152,13 @@ def launch_windows(
     print(f"      Clients: {cfg['num_clients']} | Rounds: {cfg['rounds']} | Epochs: {cfg['epochs']}")
     print(f"      Working Dir: {root}")
     print("=" * 65 + "\n")
+
+    # Generate data distribution chart if requested
+    if plot:
+        try:
+            generate_distribution_chart(cfg)
+        except Exception as exc:
+            print(f"Warning: Could not generate distribution plot: {exc}")
 
     print("[1/2] Server Command:")
     print(f"  {commands['server']}\n")
@@ -185,6 +221,7 @@ def main() -> None:
     parser.add_argument("--port", "-p", type=int, default=None, help="Override server port")
     parser.add_argument("--rounds", "-r", type=int, default=None, help="Override training rounds")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without spawning windows")
+    parser.add_argument("--no-plot", action="store_true", help="Skip generating data distribution chart")
     args = parser.parse_args()
 
     cfg = load_launch_config(args.server_config, args.client_config)
@@ -195,7 +232,7 @@ def main() -> None:
     if args.rounds is not None:
         cfg["rounds"] = args.rounds
 
-    launch_windows(cfg, dry_run=args.dry_run)
+    launch_windows(cfg, dry_run=args.dry_run, plot=not args.no_plot)
 
 
 if __name__ == "__main__":
