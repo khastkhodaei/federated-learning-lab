@@ -164,8 +164,10 @@ reports/
 └── <baseline_name>/                  # e.g., fedavg/, fedprox/, scaffold/
     ├── data_distribution.png        # The exact dataset partition chart for this baseline experiment
     ├── loss_curve.png               # Training Loss vs. Round progression plot
+    ├── accuracy_curves.png          # Global vs. Mean Local Test Accuracy progression plot
+    ├── client_dispersion.png        # Client Test Accuracy dispersion & fairness plot
     ├── round_duration.png           # Round Duration & Communication latency plot
-    └── metrics.json                 # Structured round-by-round losses, sample totals, and durations
+    └── metrics.json                 # Structured round-by-round losses, sample totals, accuracy, and fairness
 ```
 
 - **Data Partition Chart**: Automatically generated prior to training launch (`reports/<baseline>/data_distribution.png`).

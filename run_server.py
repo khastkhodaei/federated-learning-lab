@@ -309,8 +309,10 @@ def main() -> None:
         )
         logger.info("Baseline report artifacts generated successfully:")
         logger.info("  [Metrics JSON]    %s", artifacts["metrics_json"])
-        logger.info("  [Loss Curve]      %s", artifacts["loss_curve"])
-        logger.info("  [Round Duration]  %s", artifacts["round_duration"])
+        logger.info("  [Loss Curve]          %s", artifacts["loss_curve"])
+        logger.info("  [Accuracy Curves]     %s", artifacts["accuracy_curves"])
+        logger.info("  [Client Dispersion]   %s", artifacts["client_dispersion"])
+        logger.info("  [Round Duration]      %s", artifacts["round_duration"])
 
     except KeyboardInterrupt:
         logger.info("Stopping server...")
