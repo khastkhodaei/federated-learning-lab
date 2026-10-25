@@ -1,15 +1,14 @@
-from concurrent import futures
 import logging
 import os
 import sys
-from typing import List, Optional
+from concurrent import futures
 
 # Ensure repository root is on sys.path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import grpc
-import torch.nn as nn
-from src.server.aggregation import fedavg_bytes
+from torch import nn
+
 from src.baselines.base import ServerStrategy
 from src.server.service import FederatedServerServicer
 from src.transport.federated_pb2 import TrainRequest, TrainResponse
@@ -29,15 +28,17 @@ class FederatedServer:
         self,
         host: str = "0.0.0.0",
         port: int = 50051,
-        model: Optional[nn.Module] = None,
-        seed: Optional[int] = None,
-        servicer: Optional[FederatedServerServicer] = None,
-        strategy: Optional[ServerStrategy] = None,
+        model: nn.Module | None = None,
+        seed: int | None = None,
+        servicer: FederatedServerServicer | None = None,
+        strategy: ServerStrategy | None = None,
+        criterion: nn.Module | None = None,
         max_workers: int = 10,
     ) -> None:
         self.host = host
         self.port = port
         self.seed = seed
+        self.criterion = criterion if criterion is not None else nn.CrossEntropyLoss()
         if model is not None:
             self.global_model = model
         elif seed is not None:
@@ -51,6 +52,7 @@ class FederatedServer:
             self.strategy = strategy
         else:
             from src.baselines.fedavg.strategy import FedAvgServerStrategy
+
             self.strategy = FedAvgServerStrategy()
         self.servicer = servicer if servicer is not None else FederatedServerServicer()
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
@@ -71,7 +73,11 @@ class FederatedServer:
     def start(self) -> None:
         """Starts the gRPC server to accept incoming connections."""
         self.server.start()
-        logger.info("FederatedServer started and listening on %s:%d", self.host, self.bound_port)
+        logger.info(
+            "FederatedServer started and listening on %s:%d",
+            self.host,
+            self.bound_port,
+        )
 
     def stop(self, grace: int = 0) -> None:
         """Stops the gRPC server."""
@@ -85,12 +91,13 @@ class FederatedServer:
     def trigger_round(
         self,
         round_id: int,
-        weights: Optional[bytes] = None,
+        weights: bytes | None = None,
         epochs: int = 1,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         aggregate: bool = False,
-    ) -> List[TrainResponse]:
+    ) -> list[TrainResponse]:
         """Commands all registered nodes to execute a training round in parallel
+
         and waits until all responses are collected (synchronous round barrier).
         If weights are not explicitly provided, uses the server's initial/current global model.
         If aggregate is True, aggregates the updates via FedAvg and updates the global model.
@@ -118,10 +125,12 @@ class FederatedServer:
         def _call_node(node_id: str, address: str) -> TrainResponse:
             with grpc.insecure_channel(address) as channel:
                 stub = NodeServiceStub(channel)
-                req = TrainRequest(round_id=round_id, weights=payload, epochs=epochs)
+                req = TrainRequest(
+                    round_id=round_id, weights=payload, epochs=epochs
+                )
                 return stub.TrainRound(req, timeout=timeout)
 
-        responses: List[TrainResponse] = []
+        responses: list[TrainResponse] = []
         with futures.ThreadPoolExecutor(max_workers=len(valid_nodes)) as executor:
             future_to_node = {
                 executor.submit(_call_node, nid, addr): nid
@@ -132,9 +141,18 @@ class FederatedServer:
                 try:
                     res = fut.result()
                     responses.append(res)
-                    logger.info("Received TrainRound response from %s (success: %s)", nid, res.success)
-                except Exception as err:
-                    logger.error("Failed to train round %d on node %s: %s", round_id, nid, err)
+                    logger.info(
+                        "Received TrainRound response from %s (success: %s)",
+                        nid,
+                        res.success,
+                    )
+                except Exception as err:  # noqa: BLE001
+                    logger.error(
+                        "Failed to train round %d on node %s: %s",
+                        round_id,
+                        nid,
+                        err,
+                    )
 
         logger.info(
             "Round %d completed. Gathered %d/%d updates.",
@@ -148,7 +166,9 @@ class FederatedServer:
 
         return responses
 
-    def aggregate_responses(self, responses: List[TrainResponse], round_id: int = 1) -> Optional[bytes]:
+    def aggregate_responses(
+        self, responses: list[TrainResponse], round_id: int = 1
+    ) -> bytes | None:
         """Aggregates successful TrainRound responses using the configured strategy and updates the global model.
 
         Returns:
@@ -160,7 +180,9 @@ class FederatedServer:
             if r.success and r.weights
         ]
         if not valid_updates:
-            logger.warning("No successful client updates with weights to aggregate.")
+            logger.warning(
+                "No successful client updates with weights to aggregate."
+            )
             return None
 
         aggregated_bytes = self.strategy.aggregate(
@@ -185,7 +207,9 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 50051
     server = FederatedServer(host="0.0.0.0", port=port)
     server.start()
-    print(f"\n>>> Federated Server is running on port {server.bound_port}. Press Ctrl+C to stop.\n")
+    print(
+        f"\n>>> Federated Server is running on port {server.bound_port}. Press Ctrl+C to stop.\n"
+    )
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:

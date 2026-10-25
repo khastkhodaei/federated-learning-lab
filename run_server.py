@@ -258,7 +258,7 @@ def main() -> None:
                 global_metrics = evaluate_model(
                     model=server.global_model,
                     dataloader=global_test_loader,
-                    criterion=server.criterion,
+                    criterion=getattr(server, "criterion", None),
                 )
                 global_acc = round(global_metrics.get("accuracy", 0.0), 4)
                 global_loss = round(global_metrics.get("loss", 0.0), 4)

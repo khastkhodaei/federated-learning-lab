@@ -159,3 +159,23 @@ def test_federated_server_round_with_fedavg_aggregation() -> None:
         t1.close()
         t2.close()
         server.stop(grace=0)
+
+
+def test_federated_server_criterion_initialization() -> None:
+    from torch import nn
+
+    server_default = FederatedServer(host="127.0.0.1", port=0)
+    try:
+        assert hasattr(server_default, "criterion")
+        assert isinstance(server_default.criterion, nn.CrossEntropyLoss)
+    finally:
+        server_default.stop(grace=0)
+
+    custom_criterion = nn.NLLLoss()
+    server_custom = FederatedServer(
+        host="127.0.0.1", port=0, criterion=custom_criterion
+    )
+    try:
+        assert server_custom.criterion is custom_criterion
+    finally:
+        server_custom.stop(grace=0)
