@@ -46,7 +46,19 @@ source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
-```
+`
+
+### 2. Command Reference Guide
+For the full guide of CLI commands, multi-terminal orchestration, and data visualizers, see [COMMANDS.md](COMMANDS.md).
+
+`ash
+# Launch server + client terminals with automatic distribution chart:
+python launch_terminals.py
+
+# Visualize client data distribution (stacked bar chart):
+python plot_distribution.py
+`
+``
 
 ---
 
