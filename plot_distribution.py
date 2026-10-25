@@ -1,3 +1,5 @@
+from src.config import load_unified_config
+
 """Standalone CLI for visualizing Federated Learning dataset partitions.
 
 Loads partitioning parameters from configs/server.yaml and configs/client.yaml,
@@ -10,7 +12,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import yaml
 from fl_data_generator import FederatedDataset
 
 from src.utils.plotting import (
@@ -25,7 +26,8 @@ def main() -> None:
         description="Federated Learning Lab - Data Distribution Visualizer",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--server-config", type=str, default="configs/server.yaml", help="Path to server YAML")
+    parser.add_argument("--config", "-C", type=str, default="configs/config.yaml", help="Path to unified YAML")
+    parser.add_argument("--server-config", type=str, default=None, help="Path to legacy server YAML")
     parser.add_argument("--client-config", type=str, default="configs/client.yaml", help="Path to client YAML")
     parser.add_argument("--clients", "-c", type=int, default=None, help="Override number of clients")
     parser.add_argument("--dataset", "-d", type=str, default=None, help="Dataset: cifar10, mnist, fashion_mnist")
@@ -37,24 +39,28 @@ def main() -> None:
     args = parser.parse_args()
 
     # 1. Load settings from YAML
-    server_data = {}
-    if Path(args.server_config).is_file():
-        with open(args.server_config, "r", encoding="utf-8") as f:
-            server_data = yaml.safe_load(f) or {}
-
-    client_data = {}
-    if Path(args.client_config).is_file():
-        with open(args.client_config, "r", encoding="utf-8") as f:
-            client_data = yaml.safe_load(f) or {}
-
-    ds_cfg = client_data.get("dataset", {})
-
-    num_clients = args.clients if args.clients is not None else int(server_data.get("num_clients", ds_cfg.get("num_clients", 3)))
-    dataset_name = args.dataset if args.dataset is not None else str(ds_cfg.get("name", "cifar10"))
-    partition = args.partition if args.partition is not None else str(ds_cfg.get("partition", "dirichlet"))
-    alpha = args.alpha if args.alpha is not None else float(ds_cfg.get("alpha", 0.5))
-    seed = int(ds_cfg.get("seed", 42))
-    baseline = (args.baseline or server_data.get("baseline", client_data.get("baseline", "fedavg"))).lower().strip()
+    cfg_p = Path(args.config)
+    if cfg_p.is_file() and not args.server_config:
+        u_cfg = load_unified_config(cfg_p)
+        num_clients = args.clients if args.clients is not None else u_cfg.federated.num_clients
+        dataset_name = args.dataset if args.dataset is not None else u_cfg.dataset.name
+        partition = args.partition if args.partition is not None else u_cfg.dataset.partition
+        alpha = args.alpha if args.alpha is not None else u_cfg.dataset.alpha
+        seed = int(args.seed if hasattr(args, "seed") and args.seed is not None else u_cfg.dataset.seed)
+        baseline = (args.baseline or u_cfg.baseline).lower().strip()
+    else:
+        srv_file = args.server_config or "configs/server.yaml"
+        cli_file = args.client_config or "configs/client.yaml"
+        srv_p = Path(srv_file)
+        cli_p = Path(cli_file)
+        target = srv_p if srv_p.is_file() else cli_p
+        u_cfg = load_unified_config(target)
+        num_clients = args.clients if args.clients is not None else u_cfg.federated.num_clients
+        dataset_name = args.dataset if args.dataset is not None else u_cfg.dataset.name
+        partition = args.partition if args.partition is not None else u_cfg.dataset.partition
+        alpha = args.alpha if args.alpha is not None else u_cfg.dataset.alpha
+        seed = int(u_cfg.dataset.seed)
+        baseline = (args.baseline or u_cfg.baseline).lower().strip()
     out_path = Path(args.output) if args.output else Path("reports") / baseline / "data_distribution.png"
 
     print("\n" + "=" * 65)

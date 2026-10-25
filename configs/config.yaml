@@ -1,0 +1,51 @@
+# ==============================================================================
+# FEDERATED LEARNING LAB - UNIFIED EXPERIMENT CONFIGURATION
+# Single source of truth for central coordinator, clients, and baselines.
+# ==============================================================================
+
+experiment:
+  name: "cifar10_federated"
+  seed: 42
+  device: "cuda"
+
+federated:
+  num_clients: 3
+  rounds: 15
+  epochs_per_round: 2
+
+server:
+  host: "127.0.0.1"
+  port: 50051
+
+dataset:
+  name: "cifar10"
+  partition: "dirichlet"
+  alpha: 0.1
+  batch_size: 32
+  data_dir: "./data"
+  seed: 42
+  val_ratio: 0.2
+
+model:
+  name: "simple_cnn"
+  seed: 42
+
+training:
+  learning_rate: 0.01
+  loss: "cross_entropy"
+  optimizer:
+    name: "sgd"
+    momentum: 0.9
+    weight_decay: 0.0001
+
+# Active baseline strategy selector: fedavg, fedprox, scaffold, pdfl
+baseline: "fedavg"
+
+# Algorithm-specific hyperparameters
+baselines:
+  fedavg: {}
+  fedprox:
+    mu: 0.01
+  scaffold: {}
+  pdfl:
+    similarity_threshold: 0.5

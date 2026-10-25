@@ -9,8 +9,11 @@ This guide provides a centralized reference for running, orchestrating, and visu
 Spawns the central coordinator server and all client nodes into their own live terminal windows, and automatically generates the dataset distribution chart.
 
 ```powershell
-# Launch server and clients using settings from configs/server.yaml and configs/client.yaml
+# Launch server and clients using settings from unified configs/config.yaml
 python launch_terminals.py
+
+# Specify a custom unified config
+python launch_terminals.py --config configs/config.yaml
 
 # PowerShell shortcut equivalent
 .\launch_terminals.ps1
@@ -61,7 +64,8 @@ If you prefer to start each component in individual command line tabs or on sepa
 
 ### Step 1: Start Central Server (Terminal 1)
 ```powershell
-python run_server.py --config configs/server.yaml
+# Standard execution with unified config
+python run_server.py --config configs/config.yaml
 ```
 *Options:*
 - `--port 50051`: Listening port
@@ -72,8 +76,8 @@ python run_server.py --config configs/server.yaml
 
 ### Step 2: Start Client Nodes (Terminals 2, 3, ...)
 ```powershell
-# Start Client 0 (supports --baseline fedavg)
-python run_client.py --id 0 --server 127.0.0.1:50051 --baseline fedavg
+# Start Client 0 using unified config
+python run_client.py --id 0 --config configs/config.yaml
 
 # Start Client 1
 python run_client.py --id 1 --server 127.0.0.1:50051

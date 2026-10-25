@@ -1,3 +1,5 @@
+from src.config import load_unified_config
+
 """Standalone central federated server runner.
 
 Starts the central coordinator, waits for the configured number of clients to
@@ -11,7 +13,6 @@ import time
 from pathlib import Path
 
 import torch
-import yaml
 
 from src.models.cnn import SimpleCNN
 from src.server.server import FederatedServer
@@ -35,8 +36,8 @@ def main() -> None:
         "--config",
         "-C",
         type=str,
-        default="configs/server.yaml",
-        help="Path to server YAML configuration",
+        default="configs/config.yaml",
+        help="Path to unified YAML configuration",
     )
     parser.add_argument(
         "--port",
@@ -87,31 +88,32 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Load defaults from config file if available
-    cfg_data = {}
+    # Load defaults from unified config file if available
     cfg_path = Path(args.config)
     if cfg_path.is_file():
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg_data = yaml.safe_load(f) or {}
+        u_cfg = load_unified_config(cfg_path)
+    else:
+        from src.config import UnifiedConfig
+        u_cfg = UnifiedConfig()
 
-    port = args.port if args.port is not None else int(cfg_data.get("port", 50051))
+    port = args.port if args.port is not None else u_cfg.server.port
     num_clients = (
         args.clients
         if args.clients is not None
-        else int(cfg_data.get("num_clients", 2))
+        else u_cfg.federated.num_clients
     )
-    rounds = args.rounds if args.rounds is not None else int(cfg_data.get("rounds", 3))
+    rounds = args.rounds if args.rounds is not None else u_cfg.federated.rounds
     epochs = (
         args.epochs
         if args.epochs is not None
-        else int(cfg_data.get("epochs_per_round", 1))
+        else u_cfg.federated.epochs_per_round
     )
     seed = (
         args.seed
         if args.seed is not None
-        else int(cfg_data.get("model", {}).get("seed", 42))
+        else u_cfg.model.seed
     )
-    baseline_name = (args.baseline or cfg_data.get("baseline", "fedavg")).lower()
+    baseline_name = (args.baseline or u_cfg.baseline).lower()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -123,7 +125,7 @@ def main() -> None:
     server_device_name = (
         args.device
         if args.device is not None
-        else cfg_data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        else (u_cfg.experiment.device if hasattr(u_cfg, "experiment") else ("cuda" if torch.cuda.is_available() else "cpu"))
     )
     server_device = torch.device(server_device_name)
     hw_info = get_hardware_summary(server_device_name)
@@ -160,11 +162,7 @@ def main() -> None:
 
     # Pre-load global held-out evaluation test set
     try:
-        dataset_name = (
-            cfg_data.get("dataset", {}).get("name", "cifar10")
-            if isinstance(cfg_data.get("dataset"), dict)
-            else "cifar10"
-        )
+        dataset_name = u_cfg.dataset.name if hasattr(u_cfg, "dataset") else "cifar10"
         global_test_loader = get_global_test_loader(
             dataset_name=dataset_name,
             data_dir="./data",

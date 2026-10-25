@@ -36,8 +36,8 @@ def main() -> None:
         "--config",
         "-C",
         type=str,
-        default="configs/client.yaml",
-        help="Path to client YAML configuration",
+        default="configs/config.yaml",
+        help="Path to unified YAML configuration",
     )
     parser.add_argument(
         "--id",

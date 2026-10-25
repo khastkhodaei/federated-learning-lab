@@ -1,3 +1,5 @@
+from src.config import load_unified_config
+
 """Terminal orchestrator for Federated Learning Lab.
 
 Reads server and client configurations from YAML, parses IP, port, and number of clients,
@@ -13,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
-import yaml
 from fl_data_generator import FederatedDataset
 
 from src.utils.plotting import (
@@ -24,53 +25,51 @@ from src.utils.plotting import (
 
 
 def load_launch_config(
-    server_config_path: str = "configs/server.yaml",
-    client_config_path: str = "configs/client.yaml",
+    config_path: str = "configs/config.yaml",
+    server_config_path: str | None = None,
+    client_config_path: str | None = None,
 ) -> dict[str, Any]:
-    """Loads and merges launch parameters from YAML files."""
-    server_path = Path(server_config_path)
-    client_path = Path(client_config_path)
+    """Loads launch parameters from unified YAML or legacy split configs."""
+    # Check if unified config exists
+    unified_p = Path(config_path)
+    if unified_p.is_file() and not server_config_path:
+        u_cfg = load_unified_config(unified_p)
+        return {
+            "host": u_cfg.server.host,
+            "port": u_cfg.server.port,
+            "num_clients": u_cfg.federated.num_clients,
+            "rounds": u_cfg.federated.rounds,
+            "epochs": u_cfg.federated.epochs_per_round,
+            "baseline": u_cfg.baseline,
+            "device": u_cfg.experiment.device,
+            "dataset": u_cfg.dataset.name,
+            "partition": u_cfg.dataset.partition,
+            "alpha": u_cfg.dataset.alpha,
+            "seed": u_cfg.dataset.seed,
+            "config_path": str(unified_p),
+            "server_config": str(unified_p),
+            "client_config": str(unified_p),
+        }
 
-    server_data = {}
-    if server_path.is_file():
-        with open(server_path, "r", encoding="utf-8") as f:
-            server_data = yaml.safe_load(f) or {}
-
-    client_data = {}
-    if client_path.is_file():
-        with open(client_path, "r", encoding="utf-8") as f:
-            client_data = yaml.safe_load(f) or {}
-
-    ds_cfg = client_data.get("dataset", {})
-
-    host = str(server_data.get("host", "127.0.0.1"))
-    port = int(server_data.get("port", 50051))
-    num_clients = int(server_data.get("num_clients", ds_cfg.get("num_clients", 2)))
-    rounds = int(server_data.get("rounds", 3))
-    epochs = int(server_data.get("epochs_per_round", 1))
-
-    dataset_name = str(ds_cfg.get("name", "cifar10"))
-    partition = str(ds_cfg.get("partition", "dirichlet"))
-    alpha = float(ds_cfg.get("alpha", 0.5))
-    seed = int(ds_cfg.get("seed", 42))
-    baseline = str(server_data.get("baseline", client_data.get("baseline", "fedavg")))
-
-    device = str(client_data.get("training", {}).get("device", "cpu"))
-
+    # Legacy fallback
+    srv_p = Path(server_config_path or "configs/server.yaml")
+    cli_p = Path(client_config_path or "configs/client.yaml")
+    u_cfg = load_unified_config(srv_p if srv_p.is_file() else cli_p)
     return {
-        "host": host,
-        "port": port,
-        "num_clients": num_clients,
-        "rounds": rounds,
-        "epochs": epochs,
-        "baseline": baseline,
-        "device": device,
-        "dataset": dataset_name,
-        "partition": partition,
-        "alpha": alpha,
-        "seed": seed,
-        "server_config": str(server_config_path),
-        "client_config": str(client_config_path),
+        "host": u_cfg.server.host,
+        "port": u_cfg.server.port,
+        "num_clients": u_cfg.federated.num_clients,
+        "rounds": u_cfg.federated.rounds,
+        "epochs": u_cfg.federated.epochs_per_round,
+        "baseline": u_cfg.baseline,
+        "device": u_cfg.experiment.device,
+        "dataset": u_cfg.dataset.name,
+        "partition": u_cfg.dataset.partition,
+        "alpha": u_cfg.dataset.alpha,
+        "seed": u_cfg.dataset.seed,
+        "config_path": str(srv_p if srv_p.is_file() else cli_p),
+        "server_config": str(srv_p),
+        "client_config": str(cli_p),
     }
 
 
@@ -79,9 +78,10 @@ def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
     python_bin = sys.executable
     baseline_flag = f" --baseline {cfg['baseline']}" if cfg.get("baseline") else ""
     device_flag = f" --device {cfg['device']}" if cfg.get("device") else ""
+    cfg_arg = cfg.get("config_path") or cfg.get("server_config", "configs/config.yaml")
     server_cmd = (
         f"{python_bin} run_server.py "
-        f"--config {cfg['server_config']} "
+        f"--config {cfg_arg} "
         f"--port {cfg['port']} "
         f"--clients {cfg['num_clients']} "
         f"--rounds {cfg['rounds']} "
@@ -93,9 +93,10 @@ def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
     server_address = f"{cfg['host']}:{cfg['port']}"
     clients = []
     for i in range(cfg["num_clients"]):
+        cfg_arg = cfg.get("config_path") or cfg.get("client_config", "configs/config.yaml")
         client_cmd = (
             f"{python_bin} run_client.py "
-            f"--config {cfg['client_config']} "
+            f"--config {cfg_arg} "
             f"--id {i} "
             f"--clients {cfg['num_clients']} "
             f"--server {server_address}"
@@ -254,7 +255,8 @@ def main() -> None:
         description="Federated Learning Lab - Multi-Terminal Launcher",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--server-config", type=str, default="configs/server.yaml", help="Path to server YAML")
+    parser.add_argument("--config", "-C", type=str, default="configs/config.yaml", help="Path to unified YAML configuration")
+    parser.add_argument("--server-config", type=str, default=None, help="Path to legacy server YAML")
     parser.add_argument("--client-config", type=str, default="configs/client.yaml", help="Path to client YAML")
     parser.add_argument("--clients", "-c", type=int, default=None, help="Override number of clients")
     parser.add_argument("--port", "-p", type=int, default=None, help="Override server port")
@@ -263,7 +265,7 @@ def main() -> None:
     parser.add_argument("--no-plot", action="store_true", help="Skip generating data distribution chart")
     args = parser.parse_args()
 
-    cfg = load_launch_config(args.server_config, args.client_config)
+    cfg = load_launch_config(config_path=args.config, server_config_path=args.server_config, client_config_path=args.client_config)
     if args.clients is not None:
         cfg["num_clients"] = args.clients
     if args.port is not None:
