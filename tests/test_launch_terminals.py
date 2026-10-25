@@ -93,8 +93,9 @@ def test_generate_distribution_chart_does_not_create_distributions_dir() -> None
         out_file = generate_distribution_chart(cfg)
         assert out_file.is_file()
         assert out_file == Path("reports/fedavg/data_distribution.png")
-        # Assert that reports/distributions was NOT created
+        # Assert that neither reports/distributions nor root data_distribution.png exist
         assert not Path("reports/distributions").exists()
+        assert not Path("reports/data_distribution.png").exists()
 
 
 def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFixture[str]) -> None:

@@ -38,3 +38,7 @@ runs/
 .coverage.*
 htmlcov/
 .pytest_cache/
+
+# Generated experiment reports
+reports/*
+!reports/.gitkeep
