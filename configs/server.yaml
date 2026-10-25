@@ -1,9 +1,10 @@
-host: "0.0.0.0"
+host: "127.0.0.1"
 port: 50051
+num_clients: 2
 
 model:
   name: "simple_cnn"
   seed: 42
 
-rounds: 5
+rounds: 3
 epochs_per_round: 1
