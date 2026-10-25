@@ -1,19 +1,21 @@
-from concurrent import futures
 import logging
 import os
 import sys
-from typing import Any, Callable, Iterable, Optional, Tuple, Union
+from collections.abc import Callable, Iterable
+from concurrent import futures
+from typing import Any
 
 # Ensure repository root is on sys.path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import grpc
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.optim import Optimizer
+
+from src.baselines.base import ClientTrainer
 from src.client.service import ClientNodeServicer
 from src.transport.client import FederatedClient
-from src.baselines.base import ClientTrainer
 from src.transport.federated_pb2 import (
     RegisterResponse,
     TrainRequest,
@@ -36,20 +38,22 @@ class Node:
     def __init__(
         self,
         node_id: str | int,
-        data: Optional[Any] = None,
-        model: Optional[nn.Module] = None,
-        transport: Optional[FederatedClient] = None,
-        criterion: Optional[nn.Module] = None,
-        optimizer_fn: Optional[Callable[[Iterable[nn.Parameter]], Optimizer]] = None,
+        data: Any | None = None,
+        test_data: Any | None = None,
+        model: nn.Module | None = None,
+        transport: FederatedClient | None = None,
+        criterion: nn.Module | None = None,
+        optimizer_fn: Callable[[Iterable[nn.Parameter]], Optimizer] | None = None,
         lr: float = 0.01,
-        device: Union[str, torch.device] = "cpu",
+        device: str | torch.device = "cpu",
         host: str = "127.0.0.1",
-        port: Optional[int] = None,
-        trainer: Optional[ClientTrainer] = None,
+        port: int | None = None,
+        trainer: ClientTrainer | None = None,
         max_workers: int = 5,
     ) -> None:
         self.node_id = str(node_id)
         self.data = data
+        self.test_data = test_data
         self.device = torch.device(device)
         self.model = model.to(self.device) if model is not None else None
         self.transport = transport
@@ -71,8 +75,8 @@ class Node:
         self.host = host
         self.port = port
 
-        self.server: Optional[grpc.Server] = None
-        self.listening_port: Optional[int] = None
+        self.server: grpc.Server | None = None
+        self.listening_port: int | None = None
         self.address: str = ""
 
         if self.port is not None:
@@ -94,7 +98,7 @@ class Node:
             self.server.stop(grace)
             logger.info("Node %s listener stopped.", self.node_id)
 
-    def register(self) -> Optional[RegisterResponse]:
+    def register(self) -> RegisterResponse | None:
         """Registers this node with the central server if transport is configured."""
         if self.transport is not None:
             logger.info("Node %s registering with server...", self.node_id)
@@ -108,7 +112,7 @@ class Node:
 
     def send_update(
         self, weights: bytes, num_samples: int
-    ) -> Optional[UpdateResponse]:
+    ) -> UpdateResponse | None:
         """Submits model update to the central server if transport is configured."""
         if self.transport is not None:
             logger.info(
@@ -125,8 +129,8 @@ class Node:
         return None
 
     def train_local(
-        self, epochs: int = 1, global_weights: Optional[bytes] = None
-    ) -> Tuple[bytes, int]:
+        self, epochs: int = 1, global_weights: bytes | None = None
+    ) -> tuple[bytes, int]:
         """Executes local training on self.data using the configured ClientTrainer.
 
         Returns:
@@ -137,7 +141,7 @@ class Node:
             return weights, 0
 
         optimizer = self._optimizer_fn(self.model.parameters())
-        updated_weights, total_samples, metrics = self.trainer.train(
+        updated_weights, total_samples, _metrics = self.trainer.train(
             model=self.model,
             dataloader=self.data,
             epochs=epochs,
@@ -147,6 +151,40 @@ class Node:
             global_weights=global_weights,
         )
         return updated_weights, total_samples
+
+    def evaluate_local(
+        self,
+        weights: bytes | None = None,
+        dataloader: Any | None = None,
+    ) -> dict[str, Any]:
+        """Evaluates the local model on private test partition data.
+
+        Args:
+            weights: Optional serialized global or round weights to load before evaluation.
+            dataloader: Optional explicit DataLoader override (defaults to self.test_data or self.data).
+
+        Returns:
+            Dictionary with 'loss', 'accuracy', 'correct', and 'total'.
+        """
+        if self.model is not None and weights is not None:
+            load_bytes_into_model(weights, self.model)
+
+        eval_loader = (
+            dataloader
+            if dataloader is not None
+            else (self.test_data if self.test_data is not None else self.data)
+        )
+        if self.model is None or eval_loader is None:
+            return {"loss": 0.0, "accuracy": 0.0, "correct": 0, "total": 0}
+
+        from src.utils.evaluation import evaluate_model
+
+        return evaluate_model(
+            model=self.model,
+            dataloader=eval_loader,
+            criterion=self.criterion,
+            device=self.device,
+        )
 
     def on_train_round(self, request: TrainRequest) -> TrainResponse:
         """Handles an incoming gRPC TrainRound request from the server.

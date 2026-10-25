@@ -1,12 +1,14 @@
-from dataclasses import dataclass, field
 import logging
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Union
-import yaml
+from typing import Any
 
 import torch
-import torch.nn as nn
+import yaml
+from torch import nn
 from torch.optim import Optimizer
+from torch.utils.data import DataLoader
 
 from src.client.node import Node
 from src.models.cnn import SimpleCNN
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class OptimizerConfig:
     """Hyperparameters for local model optimizer."""
+
     name: str = "sgd"
     momentum: float = 0.9
     weight_decay: float = 0.0
@@ -26,6 +29,7 @@ class OptimizerConfig:
 @dataclass
 class TrainingConfig:
     """Hyperparameters for client local training."""
+
     learning_rate: float = 0.01
     loss: str = "cross_entropy"
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -35,13 +39,15 @@ class TrainingConfig:
 @dataclass
 class ModelConfig:
     """Specification for client model architecture."""
+
     name: str = "simple_cnn"
-    seed: Optional[int] = None
+    seed: int | None = None
 
 
 @dataclass
 class DatasetConfig:
     """Partitioning and dataset specification for client private data."""
+
     name: str = "cifar10"
     batch_size: int = 32
     client_id: int = 0
@@ -49,26 +55,28 @@ class DatasetConfig:
     partition: str = "dirichlet"
     alpha: float = 0.5
     data_dir: str = "./data"
-    seed: Optional[int] = 42
+    seed: int | None = 42
+    val_ratio: float = 0.2
 
 
 @dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
+
     node_id: str = "client_1"
     server_address: str = "127.0.0.1:50051"
     client_host: str = "127.0.0.1"
-    client_port: Optional[int] = 0
+    client_port: int | None = 0
     model: ModelConfig = field(default_factory=ModelConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
 
 def load_client_config(
-    config_path: Union[str, Path],
-    node_id: Optional[str] = None,
-    client_id: Optional[int] = None,
-    num_clients: Optional[int] = None,
+    config_path: str | Path,
+    node_id: str | None = None,
+    client_id: int | None = None,
+    num_clients: int | None = None,
 ) -> ClientConfig:
     """Loads a ClientConfig from a YAML file with optional runtime overrides.
 
@@ -126,6 +134,7 @@ def load_client_config(
         alpha=float(dataset_data.get("alpha", 0.5)),
         data_dir=dataset_data.get("data_dir", "./data"),
         seed=dataset_data.get("seed", 42),
+        val_ratio=float(dataset_data.get("val_ratio", 0.2)),
     )
 
     if node_id is not None:
@@ -197,12 +206,12 @@ def create_model(model_cfg: ModelConfig) -> nn.Module:
 
 
 def create_client_node(
-    config: Union[ClientConfig, str, Path],
+    config: ClientConfig | str | Path,
     load_dataset: bool = True,
-    client_id: Optional[int] = None,
-    num_clients: Optional[int] = None,
-    node_id: Optional[str] = None,
-    fed_dataset: Optional[Any] = None,
+    client_id: int | None = None,
+    num_clients: int | None = None,
+    node_id: str | None = None,
+    fed_dataset: Any | None = None,
 ) -> Node:
     """Instantiates and configures a Node from a ClientConfig or YAML file path.
 
@@ -215,7 +224,7 @@ def create_client_node(
         fed_dataset: Optional pre-initialized FederatedDataset to avoid re-partitioning.
 
     Returns:
-        Ready-to-run Node instance.
+        Ready-to-run Node instance with train and local validation DataLoaders.
     """
     if isinstance(config, (str, Path)):
         config = load_client_config(
@@ -237,17 +246,42 @@ def create_client_node(
         config.training.optimizer, config.training.learning_rate
     )
 
-    # 3. Dataset
+    # 3. Dataset & Local Train/Validation Split
     data_loader = None
+    test_loader = None
     if fed_dataset is not None:
-        data_loader = fed_dataset.get_client_dataloader(
-            client_id=config.dataset.client_id,
-            batch_size=config.dataset.batch_size,
-            shuffle=True,
-        )
+        if config.dataset.val_ratio > 0.0 and hasattr(fed_dataset, "get_client_dataset"):
+            client_ds = fed_dataset.get_client_dataset(config.dataset.client_id)
+            if len(client_ds) > 1:
+                val_len = max(1, int(len(client_ds) * config.dataset.val_ratio))
+                train_len = len(client_ds) - val_len
+                train_ds, val_ds = torch.utils.data.random_split(
+                    client_ds,
+                    [train_len, val_len],
+                    generator=torch.Generator().manual_seed(config.dataset.seed or 42),
+                )
+                data_loader = DataLoader(
+                    train_ds, batch_size=config.dataset.batch_size, shuffle=True
+                )
+                test_loader = DataLoader(
+                    val_ds, batch_size=config.dataset.batch_size, shuffle=False
+                )
+            else:
+                data_loader = fed_dataset.get_client_dataloader(
+                    client_id=config.dataset.client_id,
+                    batch_size=config.dataset.batch_size,
+                    shuffle=True,
+                )
+        else:
+            data_loader = fed_dataset.get_client_dataloader(
+                client_id=config.dataset.client_id,
+                batch_size=config.dataset.batch_size,
+                shuffle=True,
+            )
     elif load_dataset:
         try:
             from fl_data_generator import FederatedDataset
+
             from src.datasets.transforms import get_default_transform
 
             transform = get_default_transform(config.dataset.name)
@@ -260,16 +294,40 @@ def create_client_node(
                 seed=config.dataset.seed,
                 transform=transform,
             )
-            data_loader = fed_ds.get_client_dataloader(
-                client_id=config.dataset.client_id,
-                batch_size=config.dataset.batch_size,
-                shuffle=True,
-            )
+            if config.dataset.val_ratio > 0.0 and hasattr(fed_ds, "get_client_dataset"):
+                client_ds = fed_ds.get_client_dataset(config.dataset.client_id)
+                if len(client_ds) > 1:
+                    val_len = max(1, int(len(client_ds) * config.dataset.val_ratio))
+                    train_len = len(client_ds) - val_len
+                    train_ds, val_ds = torch.utils.data.random_split(
+                        client_ds,
+                        [train_len, val_len],
+                        generator=torch.Generator().manual_seed(config.dataset.seed or 42),
+                    )
+                    data_loader = DataLoader(
+                        train_ds, batch_size=config.dataset.batch_size, shuffle=True
+                    )
+                    test_loader = DataLoader(
+                        val_ds, batch_size=config.dataset.batch_size, shuffle=False
+                    )
+                else:
+                    data_loader = fed_ds.get_client_dataloader(
+                        client_id=config.dataset.client_id,
+                        batch_size=config.dataset.batch_size,
+                        shuffle=True,
+                    )
+            else:
+                data_loader = fed_ds.get_client_dataloader(
+                    client_id=config.dataset.client_id,
+                    batch_size=config.dataset.batch_size,
+                    shuffle=True,
+                )
             logger.info(
-                "Loaded %s dataset partition for client %d (%d batches)",
+                "Loaded %s dataset partition for client %d (%d train batches, %s test batches)",
                 config.dataset.name,
                 config.dataset.client_id,
                 len(data_loader),
+                len(test_loader) if test_loader is not None else 0,
             )
         except Exception as e:
             logger.error("Failed to load dataset with fl_data_generator: %s", e)
@@ -284,6 +342,7 @@ def create_client_node(
     return Node(
         node_id=config.node_id,
         data=data_loader,
+        test_data=test_loader,
         model=model,
         transport=transport,
         criterion=criterion,
@@ -293,4 +352,3 @@ def create_client_node(
         host=config.client_host,
         port=config.client_port,
     )
-
