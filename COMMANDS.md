@@ -38,7 +38,7 @@ python launch_terminals.py --no-plot
 Generates a stacked bar chart displaying sample volumes (**Quantity Skew**) and color-coded class proportions (**Label Skew**) across all participating clients.
 
 ```powershell
-# Generate and save chart to reports/distributions/data_distribution.png (reads configs/server.yaml)
+# Generate and save chart to reports/<baseline>/data_distribution.png (reads configs/server.yaml)
 python plot_distribution.py
 
 # Display chart in an interactive pop-up window
@@ -167,5 +167,5 @@ reports/
     └── metrics.json                 # Structured round-by-round losses, sample totals, and durations
 ```
 
-- **Data Partition Chart**: Automatically generated prior to training launch (`reports/distributions/data_distribution.png`).
+- **Data Partition Chart**: Automatically generated prior to training launch (`reports/<baseline>/data_distribution.png`).
 - **Baseline Run Metrics**: When the central server completes all training rounds, it parses client responses and writes `reports/<baseline>/metrics.json` and renders `reports/<baseline>/training_curves.png`.

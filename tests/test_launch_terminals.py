@@ -72,13 +72,29 @@ def test_generate_distribution_chart_defaults_to_baseline_dir() -> None:
             "alpha": 0.5,
             "seed": 42,
             "baseline": "fedavg",
-            "output_dir": tmpdir,
         }
-        # When called without explicit output_path, should save under <output_dir>/<baseline>/data_distribution.png
         expected_path = Path(tmpdir) / "fedavg" / "data_distribution.png"
         out_file = generate_distribution_chart(cfg, output_path=str(expected_path))
         assert out_file.is_file()
         assert out_file == expected_path
+
+
+def test_generate_distribution_chart_does_not_create_distributions_dir() -> None:
+    with tempfile.TemporaryDirectory():
+        cfg = {
+            "num_clients": 2,
+            "dataset_name": "cifar10",
+            "partition": "iid",
+            "alpha": 0.5,
+            "seed": 42,
+            "baseline": "fedavg",
+        }
+        # Run chart generation to reports/fedavg/data_distribution.png
+        out_file = generate_distribution_chart(cfg)
+        assert out_file.is_file()
+        assert out_file == Path("reports/fedavg/data_distribution.png")
+        # Assert that reports/distributions was NOT created
+        assert not Path("reports/distributions").exists()
 
 
 def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFixture[str]) -> None:
@@ -95,5 +111,5 @@ def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFi
     launch_windows(cfg, dry_run=True, plot=False)
     captured = capsys.readouterr().out
     assert "Baseline Method:" in captured
-    assert "Hardware:" in captured
     assert "FedAvg" in captured
+    assert "Hardware:" in captured

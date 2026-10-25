@@ -154,17 +154,6 @@ def generate_distribution_chart(cfg: dict[str, Any], output_path: str | None = N
     )
     plt.close(fig)
 
-    try:
-        # Dual-save to legacy/shared paths only when writing to the default reports/ directory
-        if "reports" in str(out_path.resolve()):
-            for legacy in [Path("reports/data_distribution.png"), Path("reports/distributions/data_distribution.png")]:
-                if legacy.resolve() != out_path.resolve():
-                    legacy.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
-                    shutil.copyfile(out_path, legacy)
-    except OSError:
-        pass
-
     print(f"Chart saved to: {out_path}")
     return out_path
 

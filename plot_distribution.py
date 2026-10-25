@@ -94,17 +94,17 @@ def main() -> None:
         f"Partition: {partition.capitalize()} (alpha={alpha}) | Total Samples: {len(fed_dataset):,}"
     )
 
-    print(f"\nSaving chart to '{args.output}'...")
+    print(f"\nSaving chart to '{out_path}'...")
     fig = plot_client_distribution(
         counts=counts,
         class_names=class_names,
         title=title,
-        output_path=args.output,
+        output_path=str(out_path),
         show=args.interactive,
     )
     plt.close(fig)
 
-    print(f"Successfully generated data distribution chart: {args.output}\n")
+    print(f"Successfully generated data distribution chart: {out_path}\n")
 
 
 if __name__ == "__main__":
