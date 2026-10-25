@@ -1,6 +1,6 @@
 host: "127.0.0.1"
 port: 50051
-num_clients: 2
+num_clients: 10
 
 model:
   name: "simple_cnn"
