@@ -202,6 +202,7 @@ def launch_windows(
         return []
 
     processes: list[subprocess.Popen] = []
+    creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if sys.platform == "win32" else 0
 
     # 1. Spawn Server Terminal
     print(">>> Spawning Central Server terminal window...")
@@ -209,6 +210,7 @@ def launch_windows(
     p_server = subprocess.Popen(
         ["powershell.exe", "-NoExit", "-Command", server_ps_cmd],
         cwd=str(root),
+        creationflags=creationflags,
     )
     processes.append(p_server)
 
@@ -227,6 +229,7 @@ def launch_windows(
         p_client = subprocess.Popen(
             ["powershell.exe", "-NoExit", "-Command", client_ps_cmd],
             cwd=str(root),
+            creationflags=creationflags,
         )
         processes.append(p_client)
         time.sleep(0.5)

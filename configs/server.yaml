@@ -1,11 +1,11 @@
 host: "127.0.0.1"
 port: 50051
-num_clients: 8
+num_clients: 3
 baseline: 'fedavg'
 
 model:
   name: "simple_cnn"
   seed: 42
 
-rounds: 5
-epochs_per_round: 1
+rounds: 15
+epochs_per_round: 2

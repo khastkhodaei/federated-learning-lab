@@ -1,5 +1,7 @@
+import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -89,11 +91,9 @@ def test_generate_distribution_chart_does_not_create_distributions_dir() -> None
             "seed": 42,
             "baseline": "fedavg",
         }
-        # Run chart generation to reports/fedavg/data_distribution.png
         out_file = generate_distribution_chart(cfg)
         assert out_file.is_file()
         assert out_file == Path("reports/fedavg/data_distribution.png")
-        # Assert that neither reports/distributions nor root data_distribution.png exist
         assert not Path("reports/distributions").exists()
         assert not Path("reports/data_distribution.png").exists()
 
@@ -114,3 +114,29 @@ def test_launch_windows_banner_displays_baseline_method(capsys: pytest.CaptureFi
     assert "Baseline Method:" in captured
     assert "FedAvg" in captured
     assert "Hardware:" in captured
+
+
+def test_launch_windows_uses_create_new_console_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    mock_popen = MagicMock()
+    monkeypatch.setattr(subprocess, "Popen", mock_popen)
+
+    cfg = {
+        "host": "127.0.0.1",
+        "port": 50051,
+        "num_clients": 2,
+        "rounds": 1,
+        "epochs": 1,
+        "baseline": "fedavg",
+        "server_config": "configs/server.yaml",
+        "client_config": "configs/client.yaml",
+    }
+    launch_windows(cfg, dry_run=False, plot=False)
+
+    assert mock_popen.call_count == 3
+    for call in mock_popen.call_args_list:
+        kwargs = call[1]
+        assert "creationflags" in kwargs
+        if sys.platform == "win32":
+            assert kwargs["creationflags"] == subprocess.CREATE_NEW_CONSOLE
