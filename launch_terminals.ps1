@@ -1,5 +1,5 @@
 # Federated Learning Lab - Multi-Terminal Launcher
-# Reads configs/server.yaml and configs/client.yaml and spawns terminal windows.
+# Reads configs/config.yaml and configs/config.yaml and spawns terminal windows.
 
 param(
     [int]$Clients,

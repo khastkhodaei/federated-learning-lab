@@ -26,50 +26,23 @@ from src.utils.plotting import (
 
 def load_launch_config(
     config_path: str = "configs/config.yaml",
-    server_config_path: str | None = None,
-    client_config_path: str | None = None,
 ) -> dict[str, Any]:
-    """Loads launch parameters from unified YAML or legacy split configs."""
-    # Check if unified config exists
-    unified_p = Path(config_path)
-    if unified_p.is_file() and not server_config_path:
-        u_cfg = load_unified_config(unified_p)
-        return {
-            "host": u_cfg.server.host,
-            "port": u_cfg.server.port,
-            "num_clients": u_cfg.federated.num_clients,
-            "rounds": u_cfg.federated.rounds,
-            "epochs": u_cfg.federated.epochs_per_round,
-            "baseline": u_cfg.baseline,
-            "device": u_cfg.experiment.device,
-            "dataset": u_cfg.dataset.name,
-            "partition": u_cfg.dataset.partition,
-            "alpha": u_cfg.dataset.alpha,
-            "seed": u_cfg.dataset.seed,
-            "config_path": str(unified_p),
-            "server_config": str(unified_p),
-            "client_config": str(unified_p),
-        }
-
-    # Legacy fallback
-    srv_p = Path(server_config_path or "configs/server.yaml")
-    cli_p = Path(client_config_path or "configs/client.yaml")
-    u_cfg = load_unified_config(srv_p if srv_p.is_file() else cli_p)
+    """Loads experiment parameters from the unified configuration file."""
+    cfg_p = Path(config_path)
+    u_cfg = load_unified_config(cfg_p)
     return {
-        "host": u_cfg.server.host,
-        "port": u_cfg.server.port,
-        "num_clients": u_cfg.federated.num_clients,
-        "rounds": u_cfg.federated.rounds,
-        "epochs": u_cfg.federated.epochs_per_round,
+        "host": u_cfg.server_host,
+        "port": u_cfg.server_port,
+        "num_clients": u_cfg.num_clients,
+        "rounds": u_cfg.rounds,
+        "epochs": u_cfg.epochs,
         "baseline": u_cfg.baseline,
-        "device": u_cfg.experiment.device,
+        "device": u_cfg.device,
         "dataset": u_cfg.dataset.name,
         "partition": u_cfg.dataset.partition,
         "alpha": u_cfg.dataset.alpha,
         "seed": u_cfg.dataset.seed,
-        "config_path": str(srv_p if srv_p.is_file() else cli_p),
-        "server_config": str(srv_p),
-        "client_config": str(cli_p),
+        "config_path": str(cfg_p),
     }
 
 
@@ -256,8 +229,6 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--config", "-C", type=str, default="configs/config.yaml", help="Path to unified YAML configuration")
-    parser.add_argument("--server-config", type=str, default=None, help="Path to legacy server YAML")
-    parser.add_argument("--client-config", type=str, default="configs/client.yaml", help="Path to client YAML")
     parser.add_argument("--clients", "-c", type=int, default=None, help="Override number of clients")
     parser.add_argument("--port", "-p", type=int, default=None, help="Override server port")
     parser.add_argument("--rounds", "-r", type=int, default=None, help="Override training rounds")
@@ -265,7 +236,7 @@ def main() -> None:
     parser.add_argument("--no-plot", action="store_true", help="Skip generating data distribution chart")
     args = parser.parse_args()
 
-    cfg = load_launch_config(config_path=args.config, server_config_path=args.server_config, client_config_path=args.client_config)
+    cfg = load_launch_config(config_path=args.config)
     if args.clients is not None:
         cfg["num_clients"] = args.clients
     if args.port is not None:

@@ -41,7 +41,7 @@ python launch_terminals.py --no-plot
 Generates a stacked bar chart displaying sample volumes (**Quantity Skew**) and color-coded class proportions (**Label Skew**) across all participating clients.
 
 ```powershell
-# Generate and save chart to reports/<baseline>/data_distribution.png (reads configs/server.yaml)
+# Generate and save chart to reports/<baseline>/data_distribution.png (reads configs/config.yaml)
 python plot_distribution.py
 
 # Display chart in an interactive pop-up window
@@ -102,28 +102,54 @@ python run_simulation.py --synthetic --clients 3 --rounds 2
 
 ---
 
-## 5. Configuration Files
+## 5. Unified Configuration Architecture
 
-All runtime behaviors are config-driven via YAML:
+All experiment runtime behaviors, networking endpoints, and baseline hyperparameters are driven strictly by a Single Source of Truth configuration file: **`configs/config.yaml`**.
 
-- **`configs/server.yaml`**: Server IP, port, required client count, and rounds:
-  ```yaml
-  host: "127.0.0.1"
-  port: 50051
-  num_clients: 10
-  baseline: "fedavg"
-  rounds: 3
-  epochs_per_round: 1
-  ```
-- **`configs/client.yaml`**: Dataset partition type, Dirichlet $lpha$, learning rate, batch size, and optimizer:
-  ```yaml
-  server_address: "127.0.0.1:50051"
-  dataset:
-    name: "cifar10"
-    partition: "dirichlet"
-    alpha: 0.5
-    batch_size: 32
-  ```
+```yaml
+# Global Experiment Settings (Shared Across All Baselines)
+experiment_name: "cifar10_federated"
+baseline: "fedavg"
+num_clients: 3
+rounds: 15
+epochs: 2
+device: "cuda"
+seed: 42
+server_host: "127.0.0.1"
+server_port: 50051
+
+# Dataset & Partitioning
+dataset:
+  name: "cifar10"
+  partition: "dirichlet"
+  alpha: 0.1
+  batch_size: 32
+  data_dir: "./data"
+  val_ratio: 0.2
+
+# Neural Network Architecture
+model:
+  name: "simple_cnn"
+  seed: 42
+
+# Local Client Optimization
+training:
+  learning_rate: 0.01
+  loss: "cross_entropy"
+  optimizer:
+    name: "sgd"
+    momentum: 0.9
+    weight_decay: 0.0001
+
+# Baseline-Specific Hyperparameter Registry
+baselines:
+  fedavg: {}
+  fedprox:
+    mu: 0.01
+  scaffold: {}
+  pdfl:
+    similarity_threshold: 0.5
+```
 
 ---
 

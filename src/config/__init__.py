@@ -1,24 +1,30 @@
-"""Configuration module for Federated Learning Lab."""
+"""Configuration package for Federated Learning Lab."""
 
-from src.config.unified import (
+from src.utils.config import (
+    BaselinesConfig,
     DatasetConfig,
-    ExperimentConfig,
-    FederatedConfig,
+    FedAvgConfig,
+    FedProxConfig,
+    GlobalConfig,
     ModelConfig,
     OptimizerConfig,
-    ServerConfig,
+    PdflConfig,
+    ScaffoldConfig,
     TrainingConfig,
     UnifiedConfig,
     load_unified_config,
 )
 
 __all__ = [
+    "BaselinesConfig",
     "DatasetConfig",
-    "ExperimentConfig",
-    "FederatedConfig",
+    "FedAvgConfig",
+    "FedProxConfig",
+    "GlobalConfig",
     "ModelConfig",
     "OptimizerConfig",
-    "ServerConfig",
+    "PdflConfig",
+    "ScaffoldConfig",
     "TrainingConfig",
     "UnifiedConfig",
     "load_unified_config",

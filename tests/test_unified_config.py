@@ -1,4 +1,4 @@
-"""Unit tests for UnifiedConfig loader and schema."""
+"""Unit tests for the Single Source of Truth UnifiedConfig schema and loader."""
 
 import tempfile
 from pathlib import Path
@@ -6,7 +6,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.config.unified import (
+from src.utils.config import (
+    BaselinesConfig,
+    DatasetConfig,
+    FedProxConfig,
+    GlobalConfig,
+    ModelConfig,
+    OptimizerConfig,
+    PdflConfig,
+    TrainingConfig,
     UnifiedConfig,
     load_unified_config,
 )
@@ -14,74 +22,121 @@ from src.config.unified import (
 
 def test_unified_config_defaults() -> None:
     cfg = UnifiedConfig()
-    assert cfg.federated.num_clients == 3
-    assert cfg.federated.rounds == 15
-    assert cfg.federated.epochs_per_round == 2
-    assert cfg.experiment.device == "cuda"
+    assert cfg.experiment_name == "cifar10_federated"
     assert cfg.baseline == "fedavg"
-    assert cfg.server.port == 50051
+    assert cfg.num_clients == 3
+    assert cfg.rounds == 15
+    assert cfg.epochs == 2
+    assert cfg.device == "cuda"
+    assert cfg.seed == 42
+    assert cfg.server_host == "127.0.0.1"
+    assert cfg.server_port == 50051
+
+    # Nested sub-configs
+    assert isinstance(cfg.dataset, DatasetConfig)
     assert cfg.dataset.name == "cifar10"
     assert cfg.dataset.partition == "dirichlet"
     assert cfg.dataset.alpha == 0.1
+
+    assert isinstance(cfg.model, ModelConfig)
+    assert cfg.model.name == "simple_cnn"
+
+    assert isinstance(cfg.training, TrainingConfig)
+    assert isinstance(cfg.training.optimizer, OptimizerConfig)
+    assert cfg.training.learning_rate == 0.01
+
+    assert isinstance(cfg.baselines, BaselinesConfig)
+    assert isinstance(cfg.baselines.fedprox, FedProxConfig)
+    assert cfg.baselines.fedprox.mu == 0.01
+    assert isinstance(cfg.baselines.pdfl, PdflConfig)
+    assert cfg.baselines.pdfl.similarity_threshold == 0.5
 
 
 def test_load_unified_config_from_yaml() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         yaml_path = Path(tmp_dir) / "config.yaml"
-        yaml_content = {
-            "experiment": {"name": "test_exp", "seed": 123, "device": "cpu"},
-            "federated": {"num_clients": 5, "rounds": 10, "epochs_per_round": 3},
-            "server": {"host": "0.0.0.0", "port": 50055},
+        raw_yaml = {
+            "experiment_name": "custom_experiment",
+            "baseline": "fedprox",
+            "num_clients": 5,
+            "rounds": 20,
+            "epochs": 3,
+            "device": "cpu",
+            "seed": 999,
+            "server_host": "0.0.0.0",
+            "server_port": 50055,
             "dataset": {
                 "name": "mnist",
                 "partition": "iid",
                 "alpha": 0.5,
                 "batch_size": 64,
                 "data_dir": "./custom_data",
-                "seed": 123,
                 "val_ratio": 0.1,
             },
-            "model": {"name": "simple_cnn", "seed": 123},
+            "model": {"name": "simple_cnn", "seed": 999},
             "training": {
                 "learning_rate": 0.05,
                 "loss": "cross_entropy",
-                "optimizer": {"name": "adam", "momentum": 0.0, "weight_decay": 0.001},
+                "optimizer": {
+                    "name": "adam",
+                    "momentum": 0.0,
+                    "weight_decay": 0.001,
+                },
             },
-            "baseline": "fedprox",
             "baselines": {
                 "fedavg": {},
                 "fedprox": {"mu": 0.05},
                 "scaffold": {},
-                "pdfl": {"similarity_threshold": 0.7},
+                "pdfl": {"similarity_threshold": 0.8},
             },
         }
         with open(yaml_path, "w", encoding="utf-8") as f:
-            yaml.dump(yaml_content, f)
+            yaml.dump(raw_yaml, f)
 
         cfg = load_unified_config(yaml_path)
-        assert cfg.experiment.name == "test_exp"
-        assert cfg.experiment.device == "cpu"
-        assert cfg.federated.num_clients == 5
-        assert cfg.federated.rounds == 10
-        assert cfg.federated.epochs_per_round == 3
-        assert cfg.server.port == 50055
+        assert cfg.experiment_name == "custom_experiment"
+        assert cfg.baseline == "fedprox"
+        assert cfg.num_clients == 5
+        assert cfg.rounds == 20
+        assert cfg.epochs == 3
+        assert cfg.device == "cpu"
+        assert cfg.seed == 999
+        assert cfg.server_port == 50055
         assert cfg.dataset.name == "mnist"
         assert cfg.dataset.batch_size == 64
         assert cfg.dataset.val_ratio == 0.1
-        assert cfg.training.learning_rate == 0.05
-        assert cfg.training.optimizer.name == "adam"
-        assert cfg.baseline == "fedprox"
-        assert cfg.get_baseline_config() == {"mu": 0.05}
-        assert cfg.get_baseline_config("pdfl") == {"similarity_threshold": 0.7}
+
+        # Type-safe baseline accessors
+        fedprox_cfg = cfg.get_baseline_config()
+        assert isinstance(fedprox_cfg, FedProxConfig)
+        assert fedprox_cfg.mu == 0.05
+
+        pdfl_cfg = cfg.get_baseline_config("pdfl")
+        assert isinstance(pdfl_cfg, PdflConfig)
+        assert pdfl_cfg.similarity_threshold == 0.8
+
+
+def test_legacy_config_hard_break() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        server_yaml = Path(tmp_dir) / "server.yaml"
+        client_yaml = Path(tmp_dir) / "client.yaml"
+        server_yaml.write_text("port: 50051", encoding="utf-8")
+        client_yaml.write_text("server_address: 127.0.0.1:50051", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="Legacy split configuration"):
+            load_unified_config(server_yaml)
+
+        with pytest.raises(ValueError, match="Legacy split configuration"):
+            load_unified_config(client_yaml)
 
 
 def test_unified_config_to_client_config() -> None:
     cfg = UnifiedConfig()
-    client_cfg = cfg.to_client_config(client_id=1)
+    client_cfg = cfg.to_client_config(client_id=2)
 
-    assert client_cfg.node_id == "client_1"
+    assert client_cfg.node_id == "client_2"
     assert client_cfg.server_address == "127.0.0.1:50051"
-    assert client_cfg.dataset.client_id == 1
+    assert client_cfg.dataset.client_id == 2
     assert client_cfg.dataset.num_clients == 3
     assert client_cfg.dataset.name == "cifar10"
     assert client_cfg.dataset.alpha == 0.1
@@ -89,52 +144,5 @@ def test_unified_config_to_client_config() -> None:
     assert client_cfg.training.learning_rate == 0.01
 
 
-def test_unified_config_legacy_server_yaml_fallback() -> None:
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        legacy_server = Path(tmp_dir) / "server.yaml"
-        with open(legacy_server, "w", encoding="utf-8") as f:
-            yaml.dump({
-                "host": "127.0.0.1",
-                "port": 50060,
-                "num_clients": 4,
-                "rounds": 8,
-                "epochs_per_round": 2,
-                "baseline": "fedavg",
-                "device": "cpu",
-            }, f)
-
-        with pytest.warns(DeprecationWarning, match="legacy"):
-            cfg = load_unified_config(legacy_server)
-
-        assert cfg.server.port == 50060
-        assert cfg.federated.num_clients == 4
-        assert cfg.federated.rounds == 8
-        assert cfg.experiment.device == "cpu"
-
-
-def test_unified_config_legacy_client_yaml_fallback() -> None:
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        legacy_client = Path(tmp_dir) / "client.yaml"
-        with open(legacy_client, "w", encoding="utf-8") as f:
-            yaml.dump({
-                "server_address": "127.0.0.1:50070",
-                "dataset": {
-                    "name": "cifar10",
-                    "num_clients": 6,
-                    "alpha": 0.2,
-                },
-                "training": {
-                    "learning_rate": 0.02,
-                    "device": "cuda",
-                },
-                "baseline": "fedavg",
-            }, f)
-
-        with pytest.warns(DeprecationWarning, match="legacy"):
-            cfg = load_unified_config(legacy_client)
-
-        assert cfg.server.port == 50070
-        assert cfg.dataset.num_clients == 6
-        assert cfg.federated.num_clients == 6
-        assert cfg.training.learning_rate == 0.02
-        assert cfg.experiment.device == "cuda"
+def test_global_config_alias() -> None:
+    assert GlobalConfig is UnifiedConfig

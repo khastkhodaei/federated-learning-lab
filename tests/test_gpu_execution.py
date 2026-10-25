@@ -65,8 +65,7 @@ def test_launch_terminals_build_commands_passes_device_flag() -> None:
         "epochs": 1,
         "baseline": "fedavg",
         "device": "cuda",
-        "server_config": "configs/server.yaml",
-        "client_config": "configs/client.yaml",
+        "config_path": "configs/config.yaml",
     }
     cmds = build_launch_commands(cfg)
     assert "--device cuda" in cmds["server"]

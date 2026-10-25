@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Federated Learning Lab: Multi-Client Orchestrator.
 
-Spawns a central server and N client nodes from a global client.yaml configuration,
+Spawns a central server and N client nodes from the unified configs/config.yaml configuration,
 coordinates synchronous federated rounds via gRPC, and aggregates updates with FedAvg.
 """
 
@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -19,7 +19,6 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from src.client import create_client_node
-from src.client.config import load_client_config
 from src.models.cnn import SimpleCNN
 from src.server.server import FederatedServer
 from src.utils.serialization import model_to_bytes
@@ -31,10 +30,10 @@ def run_federated_simulation(
     num_clients: int = 10,
     rounds: int = 3,
     epochs: int = 1,
-    config_path: str = "configs/client.yaml",
+    config_path: str = "configs/config.yaml",
     server_port: int = 50051,
     synthetic: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Runs a complete federated learning training simulation.
 
     Args:
@@ -57,8 +56,10 @@ def run_federated_simulation(
     server_addr = f"127.0.0.1:{server.bound_port}"
     logger.info("Server bound and listening at %s", server_addr)
 
-    # Load base client configuration template
-    base_cfg = load_client_config(config_path)
+    # Load unified configuration
+    from src.utils.config import load_unified_config
+    u_cfg = load_unified_config(config_path)
+    base_cfg = u_cfg.to_client_config(client_id=0)
     base_cfg.server_address = server_addr
     base_cfg.dataset.num_clients = num_clients
 
@@ -81,6 +82,7 @@ def run_federated_simulation(
             num_clients,
         )
         from fl_data_generator import FederatedDataset
+
         from src.datasets.transforms import get_default_transform
 
         transform = get_default_transform(base_cfg.dataset.name)
@@ -95,7 +97,7 @@ def run_federated_simulation(
         )
 
     # Initialize and register all client nodes
-    nodes: List[Any] = []
+    nodes: list[Any] = []
     logger.info("Launching and registering %d client nodes...", num_clients)
     try:
         for i in range(num_clients):
@@ -128,7 +130,7 @@ def run_federated_simulation(
         logger.info("All %d clients successfully registered with the server.", len(nodes))
 
         # Coordinate Federated Rounds
-        round_history: List[Dict[str, Any]] = []
+        round_history: list[dict[str, Any]] = []
         for r in range(1, rounds + 1):
             logger.info("========================================")
             logger.info(">>> Starting Federated Round %d / %d", r, rounds)
@@ -177,8 +179,8 @@ def run_federated_simulation(
                 node.stop(grace=0)
                 if node.transport is not None:
                     node.transport.close()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Error during node transport cleanup: %s", exc)
         server.stop(grace=0)
         logger.info("Cleanup complete.")
 
@@ -212,7 +214,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/client.yaml",
+        default="configs/config.yaml",
         help="Path to global client YAML configuration template",
     )
     parser.add_argument(
