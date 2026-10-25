@@ -61,12 +61,16 @@ def test_save_baseline_report_creates_artifacts() -> None:
         assert target_dir.is_dir()
 
         json_path = target_dir / "metrics.json"
-        plot_path = target_dir / "training_curves.png"
+        loss_plot_path = target_dir / "loss_curve.png"
+        duration_plot_path = target_dir / "round_duration.png"
 
         assert json_path.is_file()
-        assert plot_path.is_file()
+        assert loss_plot_path.is_file()
+        assert duration_plot_path.is_file()
+
         assert artifacts["metrics_json"] == str(json_path)
-        assert artifacts["training_curves"] == str(plot_path)
+        assert artifacts["loss_curve"] == str(loss_plot_path)
+        assert artifacts["round_duration"] == str(duration_plot_path)
 
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -86,6 +90,8 @@ def test_save_baseline_report_supports_different_baselines() -> None:
                 output_dir=tmp_dir,
             )
             assert Path(artifacts["metrics_json"]).is_file()
-            assert Path(artifacts["training_curves"]).is_file()
+            assert Path(artifacts["loss_curve"]).is_file()
+            assert Path(artifacts["round_duration"]).is_file()
             assert (Path(tmp_dir) / baseline / "metrics.json").is_file()
-            assert (Path(tmp_dir) / baseline / "training_curves.png").is_file()
+            assert (Path(tmp_dir) / baseline / "loss_curve.png").is_file()
+            assert (Path(tmp_dir) / baseline / "round_duration.png").is_file()

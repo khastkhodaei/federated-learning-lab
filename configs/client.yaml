@@ -9,7 +9,7 @@ baseline: 'fedavg'
 dataset:
   name: "cifar10"
   partition: "dirichlet"
-  alpha: 0.01
+  alpha: 0.1
   batch_size: 32
   data_dir: "./data"
   seed: 42

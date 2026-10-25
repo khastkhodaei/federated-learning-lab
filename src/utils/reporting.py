@@ -1,7 +1,7 @@
 """Reporting and metric visualization utilities for Federated Learning baselines.
 
 Provides automated structured reporting (metrics.json) and publication-ready
-visual progression charts (training_curves.png) organized per baseline algorithm.
+visual progression charts (loss_curve.png, round_duration.png) organized per baseline algorithm.
 """
 
 import json
@@ -53,7 +53,7 @@ def save_baseline_report(
     round_history: list[dict[str, Any]],
     output_dir: str = "reports",
 ) -> dict[str, str]:
-    """Saves structured metrics.json and training_curves.png under reports/<baseline>/.
+    """Saves structured metrics.json, loss_curve.png, and round_duration.png under reports/<baseline>/.
 
     Args:
         baseline_name: Identifier for the algorithm (e.g. 'fedavg', 'fedprox').
@@ -62,14 +62,17 @@ def save_baseline_report(
         output_dir: Base directory for reports (default: 'reports').
 
     Returns:
-        Dict mapping artifact keys ('metrics_json', 'training_curves') to their absolute file paths.
+        Dict mapping artifact keys ('metrics_json', 'loss_curve', 'round_duration', 'training_curves')
+        to their absolute file paths.
     """
     clean_baseline = baseline_name.lower().strip()
     target_dir = Path(output_dir) / clean_baseline
     target_dir.mkdir(parents=True, exist_ok=True)
 
     json_path = target_dir / "metrics.json"
-    plot_path = target_dir / "training_curves.png"
+    loss_path = target_dir / "loss_curve.png"
+    duration_path = target_dir / "round_duration.png"
+    combined_path = target_dir / "training_curves.png"
 
     # 1. Build and serialize structured JSON
     from src.utils.hardware import get_hardware_summary
@@ -83,38 +86,65 @@ def save_baseline_report(
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, indent=2)
 
-    # 2. Render 2-panel visual progression plot
     rounds = [int(r.get("round", i + 1)) for i, r in enumerate(round_history)]
     losses = [float(r.get("weighted_loss", 0.0)) for r in round_history]
     durations = [float(r.get("duration_seconds", 0.0)) for r in round_history]
 
-    fig, (ax_loss, ax_time) = plt.subplots(1, 2, figsize=(12, 4.5), dpi=150)
-
-    # Left Panel: Loss Progression
-    ax_loss.plot(rounds, losses, marker="o", color="#1f77b4", linewidth=2.2, markersize=6, label=f"{clean_baseline.upper()} Loss")
-    ax_loss.set_title(f"{clean_baseline.upper()} - Training Loss vs. Round", fontsize=12, fontweight="bold")
-    ax_loss.set_xlabel("Federated Round", fontsize=10)
-    ax_loss.set_ylabel("Weighted Cross-Entropy Loss", fontsize=10)
-    ax_loss.grid(True, linestyle="--", alpha=0.6)
+    # 2. Render Plot 1: Training Loss vs. Round
+    fig_loss, ax_l = plt.subplots(figsize=(6.5, 4.5), dpi=150)
+    ax_l.plot(rounds, losses, marker="o", color="#1f77b4", linewidth=2.2, markersize=6, label=f"{clean_baseline.upper()} Loss")
+    ax_l.set_title(f"{clean_baseline.upper()} - Training Loss vs. Round", fontsize=12, fontweight="bold")
+    ax_l.set_xlabel("Federated Round", fontsize=10)
+    ax_l.set_ylabel("Weighted Cross-Entropy Loss", fontsize=10)
+    ax_l.grid(True, linestyle="--", alpha=0.6)
     if rounds:
-        ax_loss.set_xticks(rounds)
-    ax_loss.legend(frameon=True)
+        ax_l.set_xticks(rounds)
+    ax_l.legend(frameon=True)
+    plt.tight_layout()
+    plt.savefig(loss_path, bbox_inches="tight")
+    plt.close(fig_loss)
 
-    # Right Panel: Round Latency / Duration
-    ax_time.bar(rounds, durations, color="#2ca02c", alpha=0.75, width=0.5, edgecolor="#1b611b", label="Round Duration (s)")
-    ax_time.set_title(f"{clean_baseline.upper()} - Round Duration & Communication", fontsize=12, fontweight="bold")
-    ax_time.set_xlabel("Federated Round", fontsize=10)
-    ax_time.set_ylabel("Duration (seconds)", fontsize=10)
-    ax_time.grid(True, linestyle="--", alpha=0.6, axis="y")
+    # 3. Render Plot 2: Round Duration & Communication
+    fig_dur, ax_d = plt.subplots(figsize=(6.5, 4.5), dpi=150)
+    ax_d.bar(rounds, durations, color="#2ca02c", alpha=0.75, width=0.5, edgecolor="#1b611b", label="Round Duration (s)")
+    ax_d.set_title(f"{clean_baseline.upper()} - Round Duration & Communication", fontsize=12, fontweight="bold")
+    ax_d.set_xlabel("Federated Round", fontsize=10)
+    ax_d.set_ylabel("Duration (seconds)", fontsize=10)
+    ax_d.grid(True, linestyle="--", alpha=0.6, axis="y")
     if rounds:
-        ax_time.set_xticks(rounds)
-    ax_time.legend(frameon=True)
+        ax_d.set_xticks(rounds)
+    ax_d.legend(frameon=True)
+    plt.tight_layout()
+    plt.savefig(duration_path, bbox_inches="tight")
+    plt.close(fig_dur)
+
+    # 4. Render 2-panel combined plot (backward compatibility)
+    fig_comb, (ax_c_loss, ax_c_time) = plt.subplots(1, 2, figsize=(12, 4.5), dpi=150)
+    ax_c_loss.plot(rounds, losses, marker="o", color="#1f77b4", linewidth=2.2, markersize=6, label=f"{clean_baseline.upper()} Loss")
+    ax_c_loss.set_title(f"{clean_baseline.upper()} - Training Loss vs. Round", fontsize=12, fontweight="bold")
+    ax_c_loss.set_xlabel("Federated Round", fontsize=10)
+    ax_c_loss.set_ylabel("Weighted Cross-Entropy Loss", fontsize=10)
+    ax_c_loss.grid(True, linestyle="--", alpha=0.6)
+    if rounds:
+        ax_c_loss.set_xticks(rounds)
+    ax_c_loss.legend(frameon=True)
+
+    ax_c_time.bar(rounds, durations, color="#2ca02c", alpha=0.75, width=0.5, edgecolor="#1b611b", label="Round Duration (s)")
+    ax_c_time.set_title(f"{clean_baseline.upper()} - Round Duration & Communication", fontsize=12, fontweight="bold")
+    ax_c_time.set_xlabel("Federated Round", fontsize=10)
+    ax_c_time.set_ylabel("Duration (seconds)", fontsize=10)
+    ax_c_time.grid(True, linestyle="--", alpha=0.6, axis="y")
+    if rounds:
+        ax_c_time.set_xticks(rounds)
+    ax_c_time.legend(frameon=True)
 
     plt.tight_layout()
-    plt.savefig(plot_path, bbox_inches="tight")
-    plt.close(fig)
+    plt.savefig(combined_path, bbox_inches="tight")
+    plt.close(fig_comb)
 
     return {
         "metrics_json": str(json_path),
-        "training_curves": str(plot_path),
+        "loss_curve": str(loss_path),
+        "round_duration": str(duration_path),
+        "training_curves": str(combined_path),
     }

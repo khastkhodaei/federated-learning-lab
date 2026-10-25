@@ -171,7 +171,8 @@ def main() -> None:
         artifacts = save_baseline_report(baseline_name=baseline_name, round_history=round_history)
         logger.info("Baseline report artifacts generated successfully:")
         logger.info("  [Metrics JSON]    %s", artifacts["metrics_json"])
-        logger.info("  [Training Curves] %s", artifacts["training_curves"])
+        logger.info("  [Loss Curve]      %s", artifacts["loss_curve"])
+        logger.info("  [Round Duration]  %s", artifacts["round_duration"])
 
     except KeyboardInterrupt:
         logger.info("Stopping server...")

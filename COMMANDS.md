@@ -163,7 +163,8 @@ All runs automatically generate completely self-contained, publication-ready rep
 reports/
 └── <baseline_name>/                  # e.g., fedavg/, fedprox/, scaffold/
     ├── data_distribution.png        # The exact dataset partition chart for this baseline experiment
-    ├── training_curves.png          # 2-panel chart: Loss Convergence & Round Duration
+    ├── loss_curve.png               # Training Loss vs. Round progression plot
+    ├── round_duration.png           # Round Duration & Communication latency plot
     └── metrics.json                 # Structured round-by-round losses, sample totals, and durations
 ```
 
