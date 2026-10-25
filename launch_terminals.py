@@ -78,6 +78,7 @@ def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
     """Constructs command lines for the central server and all client nodes."""
     python_bin = sys.executable
     baseline_flag = f" --baseline {cfg['baseline']}" if cfg.get("baseline") else ""
+    device_flag = f" --device {cfg['device']}" if cfg.get("device") else ""
     server_cmd = (
         f"{python_bin} run_server.py "
         f"--config {cfg['server_config']} "
@@ -86,6 +87,7 @@ def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
         f"--rounds {cfg['rounds']} "
         f"--epochs {cfg['epochs']}"
         f"{baseline_flag}"
+        f"{device_flag}"
     )
 
     server_address = f"{cfg['host']}:{cfg['port']}"
@@ -98,6 +100,7 @@ def build_launch_commands(cfg: dict[str, Any]) -> dict[str, Any]:
             f"--clients {cfg['num_clients']} "
             f"--server {server_address}"
             f"{baseline_flag}"
+            f"{device_flag}"
         )
         clients.append({
             "id": i,

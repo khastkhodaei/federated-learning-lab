@@ -9,3 +9,5 @@ model:
 
 rounds: 15
 epochs_per_round: 2
+
+device: 'cuda'

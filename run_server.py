@@ -10,6 +10,7 @@ import logging
 import time
 from pathlib import Path
 
+import torch
 import yaml
 
 from src.models.cnn import SimpleCNN
@@ -73,6 +74,12 @@ def main() -> None:
         help="Global model random seed (overrides config)",
     )
     parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Device to run coordinator and evaluation on (e.g. cuda, cpu)",
+    )
+    parser.add_argument(
         "--baseline",
         type=str,
         default=None,
@@ -113,7 +120,13 @@ def main() -> None:
     )
     logger = logging.getLogger("server")
 
-    hw_info = get_hardware_summary()
+    server_device_name = (
+        args.device
+        if args.device is not None
+        else cfg_data.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    )
+    server_device = torch.device(server_device_name)
+    hw_info = get_hardware_summary(server_device_name)
 
     print("\n" + "=" * 65)
     print("       FEDERATED LEARNING LAB - CENTRAL COORDINATOR SERVER")
@@ -124,8 +137,8 @@ def main() -> None:
     print(f"       Config: {args.config}")
     print("=" * 65 + "\n")
 
-    logger.info("Initializing global SimpleCNN model (seed=%d)...", seed)
-    global_model = SimpleCNN(seed=seed)
+    logger.info("Initializing global SimpleCNN model (seed=%d) on %s...", seed, server_device_name)
+    global_model = SimpleCNN(seed=seed).to(server_device)
     initial_weights = model_to_bytes(global_model)
     logger.info("Global model initialized (%d bytes).", len(initial_weights))
 

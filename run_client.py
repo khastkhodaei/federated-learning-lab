@@ -10,9 +10,12 @@ import logging
 import sys
 from pathlib import Path
 
+import torch
 import yaml
 from fl_data_generator import FederatedDataset
+from torch.utils.data import DataLoader
 
+from src.baselines import get_baseline
 from src.client.config import (
     create_criterion,
     create_model,
@@ -21,6 +24,7 @@ from src.client.config import (
 )
 from src.client.node import Node
 from src.transport.client import FederatedClient
+from src.utils.hardware import get_hardware_summary
 
 
 def main() -> None:
@@ -28,17 +32,82 @@ def main() -> None:
         description="Federated Learning Lab - Client Node",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--config", "-C", type=str, default="configs/client.yaml", help="Path to client YAML configuration")
-    parser.add_argument("--id", "-i", type=int, default=0, help="Client partition index (0, 1, 2, ...)")
-    parser.add_argument("--clients", "-c", type=int, default=None, help="Total participating clients (overrides config)")
-    parser.add_argument("--server", "-s", type=str, default=None, help="Central coordinator server address (overrides config)")
-    parser.add_argument("--port", "-p", type=int, default=None, help="Local listening port (0 for ephemeral)")
-    parser.add_argument("--dataset", "-d", type=str, default=None, help="Dataset name: cifar10, mnist, fashion_mnist")
-    parser.add_argument("--partition", type=str, default=None, help="Partition type: dirichlet, iid, pathological, quantity")
-    parser.add_argument("--alpha", type=float, default=None, help="Dirichlet alpha parameter for label skew")
-    parser.add_argument("--batch-size", "-b", type=int, default=None, help="Local training batch size")
-    parser.add_argument("--lr", type=float, default=None, help="Local learning rate")
-    parser.add_argument("--baseline", type=str, default=None, help="Baseline local training algorithm (default: fedavg)")
+    parser.add_argument(
+        "--config",
+        "-C",
+        type=str,
+        default="configs/client.yaml",
+        help="Path to client YAML configuration",
+    )
+    parser.add_argument(
+        "--id",
+        "-i",
+        type=int,
+        default=0,
+        help="Client partition index (0, 1, 2, ...)",
+    )
+    parser.add_argument(
+        "--clients",
+        "-c",
+        type=int,
+        default=None,
+        help="Total participating clients (overrides config)",
+    )
+    parser.add_argument(
+        "--server",
+        "-s",
+        type=str,
+        default=None,
+        help="Central coordinator server address (overrides config)",
+    )
+    parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        default=None,
+        help="Local listening port (0 for ephemeral)",
+    )
+    parser.add_argument(
+        "--dataset",
+        "-d",
+        type=str,
+        default=None,
+        help="Dataset name: cifar10, mnist, fashion_mnist",
+    )
+    parser.add_argument(
+        "--partition",
+        type=str,
+        default=None,
+        help="Partition type: dirichlet, iid, pathological, quantity",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=None,
+        help="Dirichlet alpha parameter for label skew",
+    )
+    parser.add_argument(
+        "--batch-size",
+        "-b",
+        type=int,
+        default=None,
+        help="Local training batch size",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=None, help="Local learning rate"
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Compute device for local training (cuda, cpu)",
+    )
+    parser.add_argument(
+        "--baseline",
+        type=str,
+        default=None,
+        help="Baseline local training algorithm (default: fedavg)",
+    )
     args = parser.parse_args()
 
     node_id = f"client_{args.id}"
@@ -66,6 +135,8 @@ def main() -> None:
         cfg.dataset.batch_size = args.batch_size
     if args.lr is not None:
         cfg.training.learning_rate = args.lr
+    if args.device is not None:
+        cfg.training.device = args.device
 
     baseline_name = args.baseline
     if not baseline_name:
@@ -85,13 +156,14 @@ def main() -> None:
     )
     logger = logging.getLogger(node_id)
 
-    from src.utils.hardware import get_hardware_summary
     hw_info = get_hardware_summary(cfg.training.device)
 
     print("\n" + "=" * 65)
     print(f"       FEDERATED LEARNING LAB - CLIENT NODE: {node_id}")
     print(f"       Baseline: {baseline_name.upper()} | Hardware: {hw_info}")
-    print(f"       Partition: {cfg.dataset.name} ({cfg.dataset.partition}, alpha={cfg.dataset.alpha}) | Client {args.id + 1}/{cfg.dataset.num_clients}")
+    print(
+        f"       Partition: {cfg.dataset.name} ({cfg.dataset.partition}, alpha={cfg.dataset.alpha}) | Client {args.id + 1}/{cfg.dataset.num_clients}"
+    )
     print(f"       Server Address: {cfg.server_address}")
     print("=" * 65 + "\n")
 
@@ -110,33 +182,69 @@ def main() -> None:
         alpha=cfg.dataset.alpha,
         seed=cfg.dataset.seed,
     )
-    dataloader = fed_dataset.get_client_dataloader(client_id=args.id, batch_size=cfg.dataset.batch_size, shuffle=True)
+    dataloader = fed_dataset.get_client_dataloader(
+        client_id=args.id, batch_size=cfg.dataset.batch_size, shuffle=True
+    )
     num_samples = len(fed_dataset.get_client_indices(args.id))
-    logger.info("Local partition ready: %d samples assigned to this client.", num_samples)
+    logger.info(
+        "Local partition ready: %d samples assigned to this client.",
+        num_samples,
+    )
+
+    # Local train and validation data partitioning
+    test_loader = None
+    if cfg.dataset.val_ratio > 0.0 and hasattr(
+        fed_dataset, "get_client_dataset"
+    ):
+        client_ds = fed_dataset.get_client_dataset(args.id)
+        if len(client_ds) > 1:
+            val_len = max(1, int(len(client_ds) * cfg.dataset.val_ratio))
+            train_len = len(client_ds) - val_len
+            train_ds, val_ds = torch.utils.data.random_split(
+                client_ds,
+                [train_len, val_len],
+                generator=torch.Generator().manual_seed(
+                    cfg.dataset.seed or 42
+                ),
+            )
+            dataloader = DataLoader(
+                train_ds, batch_size=cfg.dataset.batch_size, shuffle=True
+            )
+            test_loader = DataLoader(
+                val_ds, batch_size=cfg.dataset.batch_size, shuffle=False
+            )
 
     model = create_model(cfg.model)
     criterion = create_criterion(cfg.training.loss)
-    optimizer_fn = create_optimizer_factory(cfg.training.optimizer, lr=cfg.training.learning_rate)
+    optimizer_fn = create_optimizer_factory(
+        cfg.training.optimizer, lr=cfg.training.learning_rate
+    )
 
-    logger.info("Connecting to central coordinator at %s...", cfg.server_address)
+    logger.info(
+        "Connecting to central coordinator at %s...", cfg.server_address
+    )
     transport = FederatedClient(target=cfg.server_address)
 
-
-
-    from src.baselines import get_baseline
     _, trainer_cls = get_baseline(baseline_name)
     trainer = trainer_cls()
-    logger.info("Configured baseline client trainer: %s (%s)", baseline_name, trainer_cls.__name__)
+    logger.info(
+        "Configured baseline client trainer: %s (%s)",
+        baseline_name,
+        trainer_cls.__name__,
+    )
 
     node = Node(
         node_id=node_id,
         model=model,
         data=dataloader,
+        test_data=test_loader,
         criterion=criterion,
         optimizer_fn=optimizer_fn,
         transport=transport,
         port=cfg.client_port,
         trainer=trainer,
+        device=cfg.training.device,
+        lr=cfg.training.learning_rate,
     )
     logger.info("Listening for server RPCs on %s", node.address)
 
@@ -144,8 +252,12 @@ def main() -> None:
     if not reg_response or not reg_response.success:
         logger.error("Failed to register with server: %s", reg_response)
         sys.exit(1)
-    logger.info("Registration confirmed by server: '%s'", reg_response.message)
-    logger.info("Ready and waiting for server to trigger federated training rounds...")
+    logger.info(
+        "Registration confirmed by server: '%s'", reg_response.message
+    )
+    logger.info(
+        "Ready and waiting for server to trigger federated training rounds..."
+    )
 
     try:
         if node.server is not None:
