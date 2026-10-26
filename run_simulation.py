@@ -33,6 +33,8 @@ def run_federated_simulation(
     config_path: str = "configs/config.yaml",
     server_port: int = 50051,
     synthetic: bool = False,
+    algorithm: str | None = None,
+    mu: float | None = None,
 ) -> dict[str, Any]:
     """Runs a complete federated learning training simulation.
 
@@ -43,25 +45,38 @@ def run_federated_simulation(
         config_path: Path to the global client YAML configuration template.
         server_port: Port for the central gRPC server (0 for ephemeral OS port).
         synthetic: If True, uses fast synthetic CIFAR-like tensors instead of downloading.
+        algorithm: Optional baseline algorithm override (e.g., 'fedavg', 'fedprox').
+        mu: Optional FedProx proximal regularization penalty override.
 
     Returns:
         Dictionary summarizing simulation results and round history.
     """
-    logger.info("Initializing Central Federated Server...")
+    # Load unified configuration
+    from src.utils.config import load_unified_config
+    from src.baselines import get_baseline
+
+    u_cfg = load_unified_config(config_path)
+    effective_algo = (algorithm or u_cfg.algorithm or u_cfg.baseline or "fedavg").lower()
+    strategy_cls, _ = get_baseline(effective_algo)
+    strategy = strategy_cls()
+
+    logger.info("Initializing Central Federated Server with %s strategy...", strategy_cls.__name__)
     global_model = SimpleCNN(seed=42)
     initial_weights = model_to_bytes(global_model)
 
-    server = FederatedServer(host="127.0.0.1", port=server_port, model=global_model)
+    server = FederatedServer(
+        host="127.0.0.1", port=server_port, model=global_model, strategy=strategy
+    )
     server.start()
     server_addr = f"127.0.0.1:{server.bound_port}"
     logger.info("Server bound and listening at %s", server_addr)
 
-    # Load unified configuration
-    from src.utils.config import load_unified_config
-    u_cfg = load_unified_config(config_path)
     base_cfg = u_cfg.to_client_config(client_id=0)
     base_cfg.server_address = server_addr
     base_cfg.dataset.num_clients = num_clients
+    base_cfg.algorithm = effective_algo
+    if mu is not None and hasattr(base_cfg, "fedprox"):
+        base_cfg.fedprox.mu = float(mu)
 
     # Prepare dataset partitions
     fed_dataset = None
@@ -229,6 +244,19 @@ def main() -> None:
         action="store_true",
         help="Use fast synthetic tensors instead of downloading/partitioning CIFAR-10",
     )
+    parser.add_argument(
+        "--algorithm",
+        "-a",
+        type=str,
+        default=None,
+        help="Algorithm baseline (e.g. fedavg, fedprox)",
+    )
+    parser.add_argument(
+        "--mu",
+        type=float,
+        default=None,
+        help="FedProx proximal regularization parameter mu",
+    )
 
     args = parser.parse_args()
 
@@ -242,6 +270,8 @@ def main() -> None:
     print("      Federated Learning Lab - Simulation Runner")
     print(f"      Clients: {args.clients} | Rounds: {args.rounds} | Epochs: {args.epochs}")
     print(f"      Config:  {args.config}")
+    if args.algorithm:
+        print(f"      Algorithm: {args.algorithm.upper()}" + (f" (mu={args.mu})" if args.mu is not None else ""))
     print("=" * 60 + "\n")
 
     run_federated_simulation(
@@ -251,6 +281,8 @@ def main() -> None:
         config_path=args.config,
         server_port=args.port,
         synthetic=args.synthetic,
+        algorithm=args.algorithm,
+        mu=args.mu,
     )
 
 

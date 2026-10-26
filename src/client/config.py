@@ -60,6 +60,13 @@ class DatasetConfig:
 
 
 @dataclass
+class FedProxClientConfig:
+    """Hyperparameters for FedProx on the client."""
+
+    mu: float = 0.01
+
+
+@dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
 
@@ -67,9 +74,11 @@ class ClientConfig:
     server_address: str = "127.0.0.1:50051"
     client_host: str = "127.0.0.1"
     client_port: int | None = 0
+    algorithm: str = "fedavg"
     model: ModelConfig = field(default_factory=ModelConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    fedprox: FedProxClientConfig = field(default_factory=FedProxClientConfig)
 
 
 def load_client_config(
@@ -144,14 +153,20 @@ def load_client_config(
     else:
         effective_node_id = f"client_{effective_client_id}"
 
+    algo = str(data.get("algorithm") or data.get("baseline", "fedavg")).lower()
+    fedprox_data = data.get("fedprox", {}) or data.get("baselines", {}).get("fedprox", {})
+    fedprox_cfg = FedProxClientConfig(mu=float(fedprox_data.get("mu", 0.01)))
+
     return ClientConfig(
         node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
         client_host=str(data.get("client_host", "127.0.0.1")),
         client_port=data.get("client_port", 0),
+        algorithm=algo,
         model=model_cfg,
         dataset=dataset_cfg,
         training=training_cfg,
+        fedprox=fedprox_cfg,
     )
 
 
@@ -205,6 +220,30 @@ def create_model(model_cfg: ModelConfig) -> nn.Module:
         return SimpleCNN(seed=model_cfg.seed)
 
 
+def create_trainer(
+    algorithm: str = "fedavg",
+    mu: float = 0.01,
+    **kwargs: Any,
+) -> Any:
+    """Factory creating a ClientTrainer instance according to the selected algorithm."""
+    algo = algorithm.lower().strip()
+    if algo in ("fedprox", "prox"):
+        from src.baselines.fedprox.trainer import FedProxClientTrainer
+
+        return FedProxClientTrainer(mu=mu)
+    elif algo in ("fedavg", "avg"):
+        from src.baselines.fedavg.trainer import FedAvgClientTrainer
+
+        return FedAvgClientTrainer()
+    else:
+        logger.warning(
+            "Unrecognized algorithm '%s'; defaulting to FedAvgClientTrainer", algorithm
+        )
+        from src.baselines.fedavg.trainer import FedAvgClientTrainer
+
+        return FedAvgClientTrainer()
+
+
 def create_client_node(
     config: ClientConfig | str | Path,
     load_dataset: bool = True,
@@ -212,6 +251,7 @@ def create_client_node(
     num_clients: int | None = None,
     node_id: str | None = None,
     fed_dataset: Any | None = None,
+    trainer: Any | None = None,
 ) -> Node:
     """Instantiates and configures a Node from a ClientConfig or YAML file path.
 
@@ -333,12 +373,20 @@ def create_client_node(
             logger.error("Failed to load dataset with fl_data_generator: %s", e)
             raise
 
-    # 4. Transport
+    # 4. Trainer Factory
+    trainer_instance = trainer
+    if trainer_instance is None:
+        algorithm_name = getattr(config, "algorithm", "fedavg")
+        fedprox_cfg = getattr(config, "fedprox", None)
+        mu_val = getattr(fedprox_cfg, "mu", 0.01) if fedprox_cfg is not None else 0.01
+        trainer_instance = create_trainer(algorithm=algorithm_name, mu=mu_val)
+
+    # 5. Transport
     transport = None
     if config.server_address:
         transport = FederatedClient(target=config.server_address)
 
-    # 5. Build and return Node
+    # 6. Build and return Node
     return Node(
         node_id=config.node_id,
         data=data_loader,
@@ -351,4 +399,5 @@ def create_client_node(
         device=config.training.device,
         host=config.client_host,
         port=config.client_port,
+        trainer=trainer_instance,
     )

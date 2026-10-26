@@ -123,6 +123,7 @@ class UnifiedConfig:
 
     experiment_name: str = "cifar10_federated"
     baseline: str = "fedavg"
+    algorithm: str = "fedavg"
     num_clients: int = 3
     rounds: int = 15
     epochs: int = 2
@@ -147,11 +148,17 @@ class UnifiedConfig:
         self, client_id: int, client_port: int = 0
     ) -> ClientConfig:
         """Translates unified parameters into individual client node specifications."""
+        from src.client.config import FedProxClientConfig
+
+        algo = (self.algorithm or self.baseline).lower().strip()
+        fedprox_mu = getattr(self.baselines.fedprox, "mu", 0.01)
+
         return ClientConfig(
             node_id=f"client_{client_id}",
             server_address=f"{self.server_host}:{self.server_port}",
             client_host=self.server_host,
             client_port=client_port,
+            algorithm=algo,
             model=ClientModelConfig(
                 name=self.model.name,
                 seed=self.model.seed,
@@ -177,6 +184,7 @@ class UnifiedConfig:
                 ),
                 device=self.device,
             ),
+            fedprox=FedProxClientConfig(mu=fedprox_mu),
         )
 
 
@@ -259,10 +267,13 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
         ),
     )
 
+    algo_val = str(raw.get("algorithm") or raw.get("baseline", "fedavg")).lower().strip()
+
     # 5. Top-level Unified Config
     return UnifiedConfig(
         experiment_name=str(raw.get("experiment_name", "cifar10_federated")),
-        baseline=str(raw.get("baseline", "fedavg")).lower().strip(),
+        baseline=algo_val,
+        algorithm=algo_val,
         num_clients=int(raw.get("num_clients", 3)),
         rounds=int(raw.get("rounds", 15)),
         epochs=int(raw.get("epochs", raw.get("epochs_per_round", 2))),

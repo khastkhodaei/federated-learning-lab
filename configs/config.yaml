@@ -5,10 +5,11 @@
 
 # Global Experiment Settings (Shared Across All Baselines)
 experiment_name: "cifar10_federated"
+algorithm: "fedavg"
 baseline: "fedavg"
 num_clients: 3
-rounds: 15
-epochs: 2
+rounds: 50
+epochs: 1
 device: "cuda"
 seed: 42
 server_host: "127.0.0.1"
