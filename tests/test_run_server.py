@@ -58,6 +58,7 @@ def test_resolve_server_settings_from_config() -> None:
     assert settings.seed == 1337
     assert settings.device == "cpu"
     assert settings.baseline == "fedprox"
+    assert settings.report_dir == "reports"
 
 
 def test_resolve_server_settings_cli_overrides_win() -> None:
@@ -71,6 +72,7 @@ def test_resolve_server_settings_cli_overrides_win() -> None:
         seed=999,
         device="cpu",
         baseline="ditto",
+        report_dir="custom_reports",
     )
     u_cfg = UnifiedConfig(
         server_host="127.0.0.1",
@@ -93,6 +95,7 @@ def test_resolve_server_settings_cli_overrides_win() -> None:
     assert settings.seed == 999
     assert settings.device == "cpu"
     assert settings.baseline == "ditto"
+    assert settings.report_dir == "custom_reports"
 
 
 def test_resolve_server_settings_regression_real_unified_config() -> None:

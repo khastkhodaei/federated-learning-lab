@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -39,6 +40,7 @@ def run_federated_simulation(
     epochs: int = 1,
     algorithm: str = "fedavg",
     config_path: str = "configs/config.yaml",
+    reports_dir: str | Path = "reports",
     server_port: int = 0,
     synthetic: bool = False,
     device: str | None = None,
@@ -63,6 +65,7 @@ def run_federated_simulation(
         epochs: Local training epochs per client per round.
         algorithm: Selected algorithm ('fedavg', 'fedprox', 'ditto', 'perfedavg', 'pfedgraph').
         config_path: Path to unified YAML configuration file.
+        reports_dir: Directory where baseline report artifacts will be saved.
         server_port: Port for coordinator gRPC server (0 for ephemeral OS port).
         synthetic: If True, uses fast synthetic tensors instead of real dataset.
         device: Target compute device ('cuda' or 'cpu').
@@ -297,7 +300,7 @@ def run_federated_simulation(
             artifacts = save_baseline_report(
                 baseline_name=effective_algo,
                 round_history=reporting_history,
-                output_dir="reports",
+                output_dir=str(reports_dir),
             )
         except Exception as rep_err:
             logger.warning("Could not save baseline report: %s", rep_err)
@@ -402,6 +405,12 @@ def main() -> None:
         action="store_true",
         help="Run using fast synthetic tensors (bypasses data downloading)",
     )
+    parser.add_argument(
+        "--reports-dir",
+        type=str,
+        default="reports",
+        help="Directory to save baseline reports and plots (default: reports)",
+    )
 
     # Algorithm-specific hyperparameters
     parser.add_argument(
@@ -468,6 +477,7 @@ def main() -> None:
         epochs=args.epochs,
         algorithm=args.algorithm,
         config_path=args.config,
+        reports_dir=args.reports_dir,
         server_port=args.port,
         synthetic=args.synthetic,
         device=args.device,

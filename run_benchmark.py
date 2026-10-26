@@ -139,6 +139,7 @@ def run_full_benchmark(
             epochs=epochs,
             algorithm=clean_algo,
             config_path=config_path,
+            reports_dir=reports_dir,
             server_port=0,
             synthetic=synthetic,
             device=device,

@@ -41,6 +41,7 @@ class ServerSettings:
     device: str
     seed: int
     baseline: str
+    report_dir: str = "reports"
 
     @property
     def clients(self) -> int:
@@ -76,12 +77,14 @@ def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
     seed_override = _get_override(args, "seed")
     device_override = _get_override(args, "device")
     baseline_override = _get_override(args, "baseline")
+    report_dir_override = _get_override(args, "report_dir", "reports_dir")
 
     host = host_override if host_override is not None else getattr(u_cfg, "server_host", "127.0.0.1")
     port = port_override if port_override is not None else getattr(u_cfg, "server_port", 50051)
     num_clients = clients_override if clients_override is not None else getattr(u_cfg, "num_clients", 3)
     rounds = rounds_override if rounds_override is not None else getattr(u_cfg, "rounds", 15)
     epochs = epochs_override if epochs_override is not None else getattr(u_cfg, "epochs", 1)
+    report_dir = str(report_dir_override) if report_dir_override is not None else "reports"
 
     if seed_override is not None:
         seed = seed_override
@@ -120,6 +123,7 @@ def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
         device=str(device),
         seed=int(seed),
         baseline=str(baseline),
+        report_dir=str(report_dir),
     )
 
 
@@ -188,6 +192,12 @@ def main() -> None:
         type=str,
         default=None,
         help="Baseline aggregation strategy (default: fedavg)",
+    )
+    parser.add_argument(
+        "--report-dir",
+        type=str,
+        default="reports",
+        help="Directory to save baseline report artifacts (default: reports)",
     )
     args = parser.parse_args()
 
@@ -396,7 +406,9 @@ def main() -> None:
 
         # Automatically save structured baseline report and training progression charts
         artifacts = save_baseline_report(
-            baseline_name=settings.baseline, round_history=round_history
+            baseline_name=settings.baseline,
+            round_history=round_history,
+            output_dir=settings.report_dir,
         )
         logger.info("Baseline report artifacts generated successfully:")
         logger.info("  [Metrics JSON]    %s", artifacts["metrics_json"])
