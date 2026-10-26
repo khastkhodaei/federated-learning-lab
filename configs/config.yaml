@@ -49,6 +49,9 @@ baselines:
   perfedavg:
     alpha_lr: 0.01
     beta_lr: 0.005
+  pfedgraph:
+    alpha: 0.1
+    lam: 0.01
   scaffold: {}
   pdfl:
     similarity_threshold: 0.5

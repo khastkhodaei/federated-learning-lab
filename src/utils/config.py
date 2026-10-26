@@ -112,6 +112,14 @@ class PerFedAvgConfig:
 
 
 @dataclass
+class PFedGraphConfig:
+    """Hyperparameters for pFedGraph personalized federated learning."""
+
+    alpha: float = 0.1
+    lam: float = 0.01
+
+
+@dataclass
 class BaselinesConfig:
     """Registry of typed baseline-specific hyperparameter configurations."""
 
@@ -119,6 +127,7 @@ class BaselinesConfig:
     fedprox: FedProxConfig = field(default_factory=FedProxConfig)
     ditto: DittoConfig = field(default_factory=DittoConfig)
     perfedavg: PerFedAvgConfig = field(default_factory=PerFedAvgConfig)
+    pfedgraph: PFedGraphConfig = field(default_factory=PFedGraphConfig)
     scaffold: ScaffoldConfig = field(default_factory=ScaffoldConfig)
     pdfl: PdflConfig = field(default_factory=PdflConfig)
 
@@ -170,6 +179,7 @@ class UnifiedConfig:
             DittoClientConfig,
             FedProxClientConfig,
             PerFedAvgClientConfig,
+            PFedGraphClientConfig,
         )
 
         algo = (self.algorithm or self.baseline).lower().strip()
@@ -181,6 +191,10 @@ class UnifiedConfig:
         perfedavg_cfg = getattr(self.baselines, "perfedavg", None)
         alpha_val = getattr(perfedavg_cfg, "alpha_lr", 0.01) if perfedavg_cfg else 0.01
         beta_val = getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg else 0.005
+
+        pfedgraph_cfg = getattr(self.baselines, "pfedgraph", None)
+        graph_alpha = getattr(pfedgraph_cfg, "alpha", 0.1) if pfedgraph_cfg else 0.1
+        graph_lam = getattr(pfedgraph_cfg, "lam", 0.01) if pfedgraph_cfg else 0.01
 
         return ClientConfig(
             node_id=f"client_{client_id}",
@@ -220,6 +234,10 @@ class UnifiedConfig:
             perfedavg=PerFedAvgClientConfig(
                 alpha_lr=alpha_val,
                 beta_lr=beta_val,
+            ),
+            pfedgraph=PFedGraphClientConfig(
+                alpha=graph_alpha,
+                lam=graph_lam,
             ),
         )
 
@@ -292,6 +310,7 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
     fedprox_data = bl_data.get("fedprox", {})
     ditto_data = bl_data.get("ditto", {})
     perfedavg_data = bl_data.get("perfedavg", {}) or bl_data.get("per_fedavg", {})
+    pfedgraph_data = bl_data.get("pfedgraph", {})
     pdfl_data = bl_data.get("pdfl", {})
 
     bl_cfg = BaselinesConfig(
@@ -304,6 +323,10 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
         perfedavg=PerFedAvgConfig(
             alpha_lr=float(perfedavg_data.get("alpha_lr", perfedavg_data.get("alpha", 0.01))),
             beta_lr=float(perfedavg_data.get("beta_lr", perfedavg_data.get("beta", 0.005))),
+        ),
+        pfedgraph=PFedGraphConfig(
+            alpha=float(pfedgraph_data.get("alpha", 0.1)),
+            lam=float(pfedgraph_data.get("lam", pfedgraph_data.get("lambda", 0.01))),
         ),
         scaffold=ScaffoldConfig(),
         pdfl=PdflConfig(

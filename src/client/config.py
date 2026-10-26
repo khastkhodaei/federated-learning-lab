@@ -83,6 +83,14 @@ class PerFedAvgClientConfig:
 
 
 @dataclass
+class PFedGraphClientConfig:
+    """Hyperparameters for pFedGraph on the client."""
+
+    alpha: float = 0.1
+    lam: float = 0.01
+
+
+@dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
 
@@ -97,6 +105,7 @@ class ClientConfig:
     fedprox: FedProxClientConfig = field(default_factory=FedProxClientConfig)
     ditto: DittoClientConfig = field(default_factory=DittoClientConfig)
     perfedavg: PerFedAvgClientConfig = field(default_factory=PerFedAvgClientConfig)
+    pfedgraph: PFedGraphClientConfig = field(default_factory=PFedGraphClientConfig)
 
 
 def load_client_config(
@@ -191,6 +200,12 @@ def load_client_config(
         beta_lr=float(perfedavg_data.get("beta_lr", perfedavg_data.get("beta", 0.005))),
     )
 
+    pfedgraph_data = data.get("pfedgraph", {}) or data.get("baselines", {}).get("pfedgraph", {})
+    pfedgraph_cfg = PFedGraphClientConfig(
+        alpha=float(pfedgraph_data.get("alpha", 0.1)),
+        lam=float(pfedgraph_data.get("lam", pfedgraph_data.get("lambda", 0.01))),
+    )
+
     return ClientConfig(
         node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
@@ -203,6 +218,7 @@ def load_client_config(
         fedprox=fedprox_cfg,
         ditto=ditto_cfg,
         perfedavg=perfedavg_cfg,
+        pfedgraph=pfedgraph_cfg,
     )
 
 
@@ -267,7 +283,11 @@ def create_trainer(
 ) -> Any:
     """Factory creating a ClientTrainer instance according to the selected algorithm."""
     algo = algorithm.lower().strip()
-    if algo in ("perfedavg", "per_fedavg", "per-fedavg", "fomaml"):
+    if algo in ("pfedgraph", "graph"):
+        from src.baselines.pfedgraph.trainer import PFedGraphClientTrainer
+
+        return PFedGraphClientTrainer()
+    elif algo in ("perfedavg", "per_fedavg", "per-fedavg", "fomaml"):
         from src.baselines.perfedavg.trainer import PerFedAvgClientTrainer
 
         return PerFedAvgClientTrainer(

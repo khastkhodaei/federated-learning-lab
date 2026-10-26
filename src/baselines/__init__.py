@@ -3,12 +3,14 @@ from .ditto import DittoClientTrainer, DittoServerStrategy, DittoTrainer
 from .fedavg import FedAvgClientTrainer, FedAvgServerStrategy
 from .fedprox import FedProxClientTrainer, FedProxServerStrategy, FedProxTrainer
 from .perfedavg import PerFedAvgClientTrainer, PerFedAvgServerStrategy, PerFedAvgTrainer
+from .pfedgraph import PFedGraphClientTrainer, PFedGraphServerStrategy, PFedGraphTrainer
 
 BASELINES: dict[str, tuple[type[ServerStrategy], type[ClientTrainer]]] = {
     "fedavg": (FedAvgServerStrategy, FedAvgClientTrainer),
     "fedprox": (FedProxServerStrategy, FedProxClientTrainer),
     "ditto": (DittoServerStrategy, DittoClientTrainer),
     "perfedavg": (PerFedAvgServerStrategy, PerFedAvgClientTrainer),
+    "pfedgraph": (PFedGraphServerStrategy, PFedGraphClientTrainer),
 }
 
 
@@ -33,6 +35,9 @@ __all__ = [
     "FedProxClientTrainer",
     "FedProxServerStrategy",
     "FedProxTrainer",
+    "PFedGraphClientTrainer",
+    "PFedGraphServerStrategy",
+    "PFedGraphTrainer",
     "PerFedAvgClientTrainer",
     "PerFedAvgServerStrategy",
     "PerFedAvgTrainer",

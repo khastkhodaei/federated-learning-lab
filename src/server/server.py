@@ -54,6 +54,7 @@ class FederatedServer:
             from src.baselines.fedavg.strategy import FedAvgServerStrategy
 
             self.strategy = FedAvgServerStrategy()
+        self.client_weights: dict[str, bytes] = {}
         self.servicer = servicer if servicer is not None else FederatedServerServicer()
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
         add_FederatedServiceServicer_to_server(self.servicer, self.server)
@@ -91,7 +92,7 @@ class FederatedServer:
     def trigger_round(
         self,
         round_id: int,
-        weights: bytes | None = None,
+        weights: bytes | dict[str, bytes] | None = None,
         epochs: int = 1,
         timeout: float | None = None,
         aggregate: bool = False,
@@ -99,10 +100,16 @@ class FederatedServer:
         """Commands all registered nodes to execute a training round in parallel
 
         and waits until all responses are collected (synchronous round barrier).
-        If weights are not explicitly provided, uses the server's initial/current global model.
-        If aggregate is True, aggregates the updates via FedAvg and updates the global model.
+        If weights are not explicitly provided, uses client-specific weights if available,
+        or the server's initial/current global model.
+        If aggregate is True, aggregates the updates via the configured strategy and updates the global model.
         """
-        payload = weights if weights is not None else self.get_global_weights()
+        if weights is not None:
+            payload = weights
+        elif self.client_weights:
+            payload = self.client_weights
+        else:
+            payload = self.get_global_weights()
 
         registered = dict(self.servicer.registered_nodes)
         valid_nodes = {nid: addr for nid, addr in registered.items() if addr}
@@ -114,19 +121,28 @@ class FederatedServer:
             )
             return []
 
+        payload_desc = (
+            f"{len(payload)} client models"
+            if isinstance(payload, dict)
+            else f"{len(payload)} bytes"
+        )
         logger.info(
-            "Triggering round %d on %d nodes in parallel (epochs: %d, payload: %d bytes)...",
+            "Triggering round %d on %d nodes in parallel (epochs: %d, payload: %s)...",
             round_id,
             len(valid_nodes),
             epochs,
-            len(payload),
+            payload_desc,
         )
 
         def _call_node(node_id: str, address: str) -> TrainResponse:
+            if isinstance(payload, dict):
+                node_payload = payload.get(node_id, self.get_global_weights())
+            else:
+                node_payload = payload
             with grpc.insecure_channel(address) as channel:
                 stub = NodeServiceStub(channel)
                 req = TrainRequest(
-                    round_id=round_id, weights=payload, epochs=epochs
+                    round_id=round_id, weights=node_payload, epochs=epochs
                 )
                 return stub.TrainRound(req, timeout=timeout)
 
@@ -185,11 +201,19 @@ class FederatedServer:
             )
             return None
 
+        client_ids = [r.node_id for r in responses if r.success and r.weights]
         aggregated_bytes = self.strategy.aggregate(
             global_model=self.global_model,
             client_updates=valid_updates,
             round_id=round_id,
+            client_ids=client_ids,
+            responses=responses,
         )
+
+        # Retain client-specific models if strategy generates them
+        if hasattr(self.strategy, "client_weights") and isinstance(self.strategy.client_weights, dict):
+            self.client_weights = dict(self.strategy.client_weights)
+
         logger.info(
             "Server global model updated via %s aggregation (%d bytes).",
             self.strategy.__class__.__name__,
