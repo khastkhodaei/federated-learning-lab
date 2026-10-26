@@ -272,6 +272,38 @@ def run_federated_simulation(
         final_weights = server.get_global_weights()
         logger.info("%s federated simulation completed successfully across %d rounds.", effective_algo.upper(), rounds)
 
+        # Build standardized reporting history and save baseline artifacts
+        reporting_history = []
+        for r_rec in round_history:
+            c_accs = [a / 100.0 for a in r_rec.get("client_accuracies", [])]
+            rep_item = {
+                "round": r_rec.get("round_id", 1),
+                "duration_seconds": r_rec.get("elapsed_sec", 0.0),
+                "total_samples": r_rec.get("total_samples", 0),
+                "weighted_loss": r_rec.get("avg_client_loss", 0.0),
+                "global_test_accuracy": r_rec.get("global_accuracy", 0.0) / 100.0,
+                "mean_local_test_accuracy": r_rec.get("mean_local_accuracy", 0.0) / 100.0,
+                "std_local_test_accuracy": float(np.std(c_accs)) if c_accs else 0.0,
+                "worst_10_local_accuracy": float(np.percentile(c_accs, 10)) if c_accs else (r_rec.get("mean_local_accuracy", 0.0) / 100.0),
+                "client_metrics": {
+                    f"client_{idx}": {"test_accuracy": ca} for idx, ca in enumerate(c_accs)
+                },
+            }
+            if "adjacency_matrix" in r_rec:
+                rep_item["adjacency_matrix"] = r_rec["adjacency_matrix"]
+            reporting_history.append(rep_item)
+
+        try:
+            from src.utils.reporting import save_baseline_report
+            artifacts = save_baseline_report(
+                baseline_name=effective_algo,
+                round_history=reporting_history,
+                output_dir="reports",
+            )
+        except Exception as rep_err:
+            logger.warning("Could not save baseline report: %s", rep_err)
+            artifacts = {}
+
         result: dict[str, Any] = {
             "algorithm": effective_algo,
             "num_clients": num_clients,
@@ -279,6 +311,7 @@ def run_federated_simulation(
             "round_history": round_history,
             "initial_model_weights": initial_weights,
             "final_model_weights": final_weights,
+            "artifacts": artifacts,
         }
 
         if effective_algo == "pfedgraph" and hasattr(strategy, "adjacency_matrix") and strategy.adjacency_matrix is not None:
