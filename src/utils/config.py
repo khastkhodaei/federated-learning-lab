@@ -104,12 +104,21 @@ class DittoConfig:
 
 
 @dataclass
+class PerFedAvgConfig:
+    """Hyperparameters for Per-FedAvg meta-learning baseline (FO-MAML)."""
+
+    alpha_lr: float = 0.01
+    beta_lr: float = 0.005
+
+
+@dataclass
 class BaselinesConfig:
     """Registry of typed baseline-specific hyperparameter configurations."""
 
     fedavg: FedAvgConfig = field(default_factory=FedAvgConfig)
     fedprox: FedProxConfig = field(default_factory=FedProxConfig)
     ditto: DittoConfig = field(default_factory=DittoConfig)
+    perfedavg: PerFedAvgConfig = field(default_factory=PerFedAvgConfig)
     scaffold: ScaffoldConfig = field(default_factory=ScaffoldConfig)
     pdfl: PdflConfig = field(default_factory=PdflConfig)
 
@@ -157,13 +166,21 @@ class UnifiedConfig:
         self, client_id: int, client_port: int = 0
     ) -> ClientConfig:
         """Translates unified parameters into individual client node specifications."""
-        from src.client.config import DittoClientConfig, FedProxClientConfig
+        from src.client.config import (
+            DittoClientConfig,
+            FedProxClientConfig,
+            PerFedAvgClientConfig,
+        )
 
         algo = (self.algorithm or self.baseline).lower().strip()
         fedprox_mu = getattr(self.baselines.fedprox, "mu", 0.01)
         ditto_cfg = getattr(self.baselines, "ditto", None)
         ditto_lambda = getattr(ditto_cfg, "lambda_penalty", 0.1) if ditto_cfg else 0.1
         ditto_epochs = getattr(ditto_cfg, "personalized_epochs", 1) if ditto_cfg else 1
+
+        perfedavg_cfg = getattr(self.baselines, "perfedavg", None)
+        alpha_val = getattr(perfedavg_cfg, "alpha_lr", 0.01) if perfedavg_cfg else 0.01
+        beta_val = getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg else 0.005
 
         return ClientConfig(
             node_id=f"client_{client_id}",
@@ -199,6 +216,10 @@ class UnifiedConfig:
             fedprox=FedProxClientConfig(mu=fedprox_mu),
             ditto=DittoClientConfig(
                 lambda_penalty=ditto_lambda, personalized_epochs=ditto_epochs
+            ),
+            perfedavg=PerFedAvgClientConfig(
+                alpha_lr=alpha_val,
+                beta_lr=beta_val,
             ),
         )
 
@@ -270,6 +291,7 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
     bl_data = raw.get("baselines", {})
     fedprox_data = bl_data.get("fedprox", {})
     ditto_data = bl_data.get("ditto", {})
+    perfedavg_data = bl_data.get("perfedavg", {}) or bl_data.get("per_fedavg", {})
     pdfl_data = bl_data.get("pdfl", {})
 
     bl_cfg = BaselinesConfig(
@@ -278,6 +300,10 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
         ditto=DittoConfig(
             lambda_penalty=float(ditto_data.get("lambda_penalty", ditto_data.get("lambda", 0.1))),
             personalized_epochs=int(ditto_data.get("personalized_epochs", 1)),
+        ),
+        perfedavg=PerFedAvgConfig(
+            alpha_lr=float(perfedavg_data.get("alpha_lr", perfedavg_data.get("alpha", 0.01))),
+            beta_lr=float(perfedavg_data.get("beta_lr", perfedavg_data.get("beta", 0.005))),
         ),
         scaffold=ScaffoldConfig(),
         pdfl=PdflConfig(

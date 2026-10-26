@@ -184,6 +184,18 @@ class Node:
         if eval_model is None or eval_loader is None:
             return {"loss": 0.0, "accuracy": 0.0, "correct": 0, "total": 0}
 
+        # Check if trainer implements adaptation-before-evaluation (e.g. Per-FedAvg)
+        if hasattr(self.trainer, "adapt_and_evaluate") and callable(getattr(self.trainer, "adapt_and_evaluate")):
+            train_loader = self.data
+            if train_loader is not None and self.model is not None:
+                return self.trainer.adapt_and_evaluate(
+                    model=self.model,
+                    train_dataloader=train_loader,
+                    eval_dataloader=eval_loader,
+                    criterion=self.criterion,
+                    device=self.device,
+                )
+
         from src.utils.evaluation import evaluate_model
 
         return evaluate_model(

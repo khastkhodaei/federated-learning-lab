@@ -75,6 +75,14 @@ class DittoClientConfig:
 
 
 @dataclass
+class PerFedAvgClientConfig:
+    """Hyperparameters for Per-FedAvg (FO-MAML) on the client."""
+
+    alpha_lr: float = 0.01
+    beta_lr: float = 0.005
+
+
+@dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
 
@@ -88,6 +96,7 @@ class ClientConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     fedprox: FedProxClientConfig = field(default_factory=FedProxClientConfig)
     ditto: DittoClientConfig = field(default_factory=DittoClientConfig)
+    perfedavg: PerFedAvgClientConfig = field(default_factory=PerFedAvgClientConfig)
 
 
 def load_client_config(
@@ -172,6 +181,16 @@ def load_client_config(
         personalized_epochs=int(ditto_data.get("personalized_epochs", 1)),
     )
 
+    perfedavg_data = (
+        data.get("perfedavg", {})
+        or data.get("baselines", {}).get("perfedavg", {})
+        or data.get("baselines", {}).get("per_fedavg", {})
+    )
+    perfedavg_cfg = PerFedAvgClientConfig(
+        alpha_lr=float(perfedavg_data.get("alpha_lr", perfedavg_data.get("alpha", 0.01))),
+        beta_lr=float(perfedavg_data.get("beta_lr", perfedavg_data.get("beta", 0.005))),
+    )
+
     return ClientConfig(
         node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
@@ -183,6 +202,7 @@ def load_client_config(
         training=training_cfg,
         fedprox=fedprox_cfg,
         ditto=ditto_cfg,
+        perfedavg=perfedavg_cfg,
     )
 
 
@@ -241,11 +261,20 @@ def create_trainer(
     mu: float = 0.01,
     lambda_penalty: float = 0.1,
     personalized_epochs: int = 1,
+    alpha_lr: float = 0.01,
+    beta_lr: float = 0.005,
     **kwargs: Any,
 ) -> Any:
     """Factory creating a ClientTrainer instance according to the selected algorithm."""
     algo = algorithm.lower().strip()
-    if algo in ("ditto",):
+    if algo in ("perfedavg", "per_fedavg", "per-fedavg", "fomaml"):
+        from src.baselines.perfedavg.trainer import PerFedAvgClientTrainer
+
+        return PerFedAvgClientTrainer(
+            alpha_lr=alpha_lr,
+            beta_lr=beta_lr,
+        )
+    elif algo in ("ditto",):
         from src.baselines.ditto.trainer import DittoClientTrainer
 
         return DittoClientTrainer(
@@ -411,11 +440,20 @@ def create_client_node(
         pers_epochs = (
             getattr(ditto_cfg, "personalized_epochs", 1) if ditto_cfg is not None else 1
         )
+        perfedavg_cfg = getattr(config, "perfedavg", None)
+        alpha_val = (
+            getattr(perfedavg_cfg, "alpha_lr", 0.01) if perfedavg_cfg is not None else 0.01
+        )
+        beta_val = (
+            getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg is not None else 0.005
+        )
         trainer_instance = create_trainer(
             algorithm=algorithm_name,
             mu=mu_val,
             lambda_penalty=lambda_val,
             personalized_epochs=pers_epochs,
+            alpha_lr=alpha_val,
+            beta_lr=beta_val,
         )
 
     # 5. Transport

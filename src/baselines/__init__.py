@@ -2,11 +2,13 @@ from .base import ClientTrainer, ServerStrategy
 from .ditto import DittoClientTrainer, DittoServerStrategy, DittoTrainer
 from .fedavg import FedAvgClientTrainer, FedAvgServerStrategy
 from .fedprox import FedProxClientTrainer, FedProxServerStrategy, FedProxTrainer
+from .perfedavg import PerFedAvgClientTrainer, PerFedAvgServerStrategy, PerFedAvgTrainer
 
 BASELINES: dict[str, tuple[type[ServerStrategy], type[ClientTrainer]]] = {
     "fedavg": (FedAvgServerStrategy, FedAvgClientTrainer),
     "fedprox": (FedProxServerStrategy, FedProxClientTrainer),
     "ditto": (DittoServerStrategy, DittoClientTrainer),
+    "perfedavg": (PerFedAvgServerStrategy, PerFedAvgClientTrainer),
 }
 
 
@@ -31,6 +33,9 @@ __all__ = [
     "FedProxClientTrainer",
     "FedProxServerStrategy",
     "FedProxTrainer",
+    "PerFedAvgClientTrainer",
+    "PerFedAvgServerStrategy",
+    "PerFedAvgTrainer",
     "ServerStrategy",
     "get_baseline",
 ]
