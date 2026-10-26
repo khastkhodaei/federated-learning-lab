@@ -1,6 +1,7 @@
 from src.client.config import (
     ClientConfig,
     create_client_node,
+    create_trainer_from_config,
     load_client_config,
 )
 from src.client.node import Node
@@ -11,5 +12,6 @@ __all__ = [
     "ClientNodeServicer",
     "Node",
     "create_client_node",
+    "create_trainer_from_config",
     "load_client_config",
 ]

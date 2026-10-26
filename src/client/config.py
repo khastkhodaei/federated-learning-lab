@@ -10,9 +10,11 @@ from torch import nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
+from src.baselines.base import ClientTrainer
 from src.client.node import Node
 from src.models.cnn import SimpleCNN
 from src.transport.client import FederatedClient
+from src.utils.hardware import resolve_device
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +134,18 @@ def load_client_config(
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
+    raw_algo = data.get("algorithm")
+    raw_base = data.get("baseline")
+    if (
+        raw_algo is not None
+        and raw_base is not None
+        and str(raw_algo).strip().lower() != str(raw_base).strip().lower()
+    ):
+        raise ValueError(
+            f"Conflicting algorithm specifications: algorithm='{raw_algo}' vs baseline='{raw_base}'"
+        )
+    algo = str(raw_algo or raw_base or "fedavg").strip().lower()
+
     opt_data = data.get("training", {}).get("optimizer", {})
     optimizer_cfg = OptimizerConfig(
         name=opt_data.get("name", "sgd"),
@@ -140,11 +154,14 @@ def load_client_config(
     )
 
     training_data = data.get("training", {})
+    device_val = training_data.get("device")
+    if device_val is None:
+        device_val = data.get("device", "cpu")
     training_cfg = TrainingConfig(
         learning_rate=float(training_data.get("learning_rate", 0.01)),
         loss=training_data.get("loss", "cross_entropy"),
         optimizer=optimizer_cfg,
-        device=training_data.get("device", "cpu"),
+        device=str(device_val),
     )
 
     model_data = data.get("model", {})
@@ -157,9 +174,21 @@ def load_client_config(
     effective_client_id = (
         client_id if client_id is not None else int(dataset_data.get("client_id", 0))
     )
-    effective_num_clients = (
-        num_clients if num_clients is not None else int(dataset_data.get("num_clients", 2))
-    )
+    if num_clients is not None:
+        effective_num_clients = int(num_clients)
+    elif dataset_data.get("num_clients") is not None:
+        effective_num_clients = int(dataset_data["num_clients"])
+    elif data.get("num_clients") is not None:
+        effective_num_clients = int(data["num_clients"])
+    else:
+        effective_num_clients = 3
+
+    if dataset_data.get("seed") is not None:
+        effective_seed = dataset_data["seed"]
+    elif data.get("seed") is not None:
+        effective_seed = data["seed"]
+    else:
+        effective_seed = 42
 
     dataset_cfg = DatasetConfig(
         name=dataset_data.get("name", "cifar10"),
@@ -169,7 +198,7 @@ def load_client_config(
         partition=dataset_data.get("partition", "dirichlet"),
         alpha=float(dataset_data.get("alpha", 0.5)),
         data_dir=dataset_data.get("data_dir", "./data"),
-        seed=dataset_data.get("seed", 42),
+        seed=effective_seed,
         val_ratio=float(dataset_data.get("val_ratio", 0.2)),
     )
 
@@ -180,7 +209,6 @@ def load_client_config(
     else:
         effective_node_id = f"client_{effective_client_id}"
 
-    algo = str(data.get("algorithm") or data.get("baseline", "fedavg")).lower()
     fedprox_data = data.get("fedprox", {}) or data.get("baselines", {}).get("fedprox", {})
     fedprox_cfg = FedProxClientConfig(mu=float(fedprox_data.get("mu", 0.01)))
 
@@ -318,6 +346,35 @@ def create_trainer(
         return FedAvgClientTrainer()
 
 
+def create_trainer_from_config(config: ClientConfig) -> ClientTrainer:
+    """Instantiates a ClientTrainer using parameters configured in ClientConfig."""
+    algorithm_name = getattr(config, "algorithm", "fedavg")
+    fedprox_cfg = getattr(config, "fedprox", None)
+    mu_val = getattr(fedprox_cfg, "mu", 0.01) if fedprox_cfg is not None else 0.01
+    ditto_cfg = getattr(config, "ditto", None)
+    lambda_val = (
+        getattr(ditto_cfg, "lambda_penalty", 0.1) if ditto_cfg is not None else 0.1
+    )
+    pers_epochs = (
+        getattr(ditto_cfg, "personalized_epochs", 1) if ditto_cfg is not None else 1
+    )
+    perfedavg_cfg = getattr(config, "perfedavg", None)
+    alpha_val = (
+        getattr(perfedavg_cfg, "alpha_lr", 0.01) if perfedavg_cfg is not None else 0.01
+    )
+    beta_val = (
+        getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg is not None else 0.005
+    )
+    return create_trainer(
+        algorithm=algorithm_name,
+        mu=mu_val,
+        lambda_penalty=lambda_val,
+        personalized_epochs=pers_epochs,
+        alpha_lr=alpha_val,
+        beta_lr=beta_val,
+    )
+
+
 def create_client_node(
     config: ClientConfig | str | Path,
     load_dataset: bool = True,
@@ -350,6 +407,9 @@ def create_client_node(
             config.dataset.num_clients = num_clients
         if node_id is not None:
             config.node_id = node_id
+
+    # 0. Resolve Device
+    config.training.device = resolve_device(config.training.device)
 
     # 1. Model
     model = create_model(config.model)
@@ -450,31 +510,7 @@ def create_client_node(
     # 4. Trainer Factory
     trainer_instance = trainer
     if trainer_instance is None:
-        algorithm_name = getattr(config, "algorithm", "fedavg")
-        fedprox_cfg = getattr(config, "fedprox", None)
-        mu_val = getattr(fedprox_cfg, "mu", 0.01) if fedprox_cfg is not None else 0.01
-        ditto_cfg = getattr(config, "ditto", None)
-        lambda_val = (
-            getattr(ditto_cfg, "lambda_penalty", 0.1) if ditto_cfg is not None else 0.1
-        )
-        pers_epochs = (
-            getattr(ditto_cfg, "personalized_epochs", 1) if ditto_cfg is not None else 1
-        )
-        perfedavg_cfg = getattr(config, "perfedavg", None)
-        alpha_val = (
-            getattr(perfedavg_cfg, "alpha_lr", 0.01) if perfedavg_cfg is not None else 0.01
-        )
-        beta_val = (
-            getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg is not None else 0.005
-        )
-        trainer_instance = create_trainer(
-            algorithm=algorithm_name,
-            mu=mu_val,
-            lambda_penalty=lambda_val,
-            personalized_epochs=pers_epochs,
-            alpha_lr=alpha_val,
-            beta_lr=beta_val,
-        )
+        trainer_instance = create_trainer_from_config(config)
 
     # 5. Transport
     transport = None

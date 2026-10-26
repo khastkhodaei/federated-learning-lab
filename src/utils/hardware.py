@@ -1,9 +1,38 @@
 """Hardware detection and diagnostic utilities for Federated Learning Lab."""
 
+import logging
 import os
 from typing import Any
 
 import torch
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_device(requested: str | None = None) -> str:
+    """Resolves target compute device with safe CPU fallback.
+
+    Semantics:
+        - None or empty string: returns "cuda" if CUDA is available else "cpu".
+        - "cuda" or "cuda:N": returns requested string if CUDA is available;
+          if CUDA is unavailable, logs a warning and falls back to "cpu".
+        - Any other value (e.g. "cpu"): returns the requested string.
+    """
+    if not requested or not str(requested).strip():
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    req_str = str(requested).strip()
+    req_lower = req_str.lower()
+    if req_lower.startswith("cuda"):
+        if not torch.cuda.is_available():
+            logger.warning(
+                "Requested device '%s' but CUDA is not available. Falling back to 'cpu'.",
+                req_str,
+            )
+            return "cpu"
+        return req_str
+
+    return req_str
 
 
 def get_hardware_summary(configured_device: str = "cpu") -> str:

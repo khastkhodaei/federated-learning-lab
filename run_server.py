@@ -24,7 +24,7 @@ from src.utils.evaluation import (
     get_global_test_loader,
     parse_client_metrics,
 )
-from src.utils.hardware import get_hardware_summary
+from src.utils.hardware import get_hardware_summary, resolve_device
 from src.utils.reporting import save_baseline_report
 from src.utils.serialization import model_to_bytes
 
@@ -98,15 +98,16 @@ def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
             seed = 42
 
     if device_override is not None:
-        device = device_override
+        device_candidate = device_override
     else:
         cfg_dev = getattr(u_cfg, "device", None)
         if cfg_dev is not None:
-            device = cfg_dev
+            device_candidate = cfg_dev
         elif hasattr(u_cfg, "experiment") and getattr(u_cfg.experiment, "device", None) is not None:
-            device = u_cfg.experiment.device
+            device_candidate = u_cfg.experiment.device
         else:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device_candidate = None
+    device = resolve_device(device_candidate)
 
     if baseline_override is not None:
         baseline = str(baseline_override).lower().strip()

@@ -8,23 +8,64 @@ executes local epochs on its private data, and transmits updated weights back ov
 import argparse
 import logging
 import sys
-from pathlib import Path
 
 import torch
-import yaml
 from fl_data_generator import FederatedDataset
 from torch.utils.data import DataLoader
 
-from src.baselines import get_baseline
 from src.client.config import (
+    ClientConfig,
     create_criterion,
     create_model,
     create_optimizer_factory,
+    create_trainer_from_config,
     load_client_config,
 )
 from src.client.node import Node
+from src.datasets.transforms import get_default_transform
 from src.transport.client import FederatedClient
-from src.utils.hardware import get_hardware_summary
+from src.utils.hardware import get_hardware_summary, resolve_device
+
+
+def build_client_dataloaders(
+    cfg: ClientConfig, client_id: int
+) -> tuple[DataLoader, DataLoader | None]:
+    """Builds training and optional validation DataLoader for a client partition."""
+    transform = get_default_transform(cfg.dataset.name)
+    fed_dataset = FederatedDataset(
+        dataset=cfg.dataset.name,
+        data_dir=cfg.dataset.data_dir,
+        num_clients=cfg.dataset.num_clients,
+        partition=cfg.dataset.partition,
+        alpha=cfg.dataset.alpha,
+        seed=cfg.dataset.seed,
+        transform=transform,
+    )
+    dataloader = fed_dataset.get_client_dataloader(
+        client_id=client_id, batch_size=cfg.dataset.batch_size, shuffle=True
+    )
+    test_loader = None
+    if cfg.dataset.val_ratio > 0.0 and hasattr(
+        fed_dataset, "get_client_dataset"
+    ):
+        client_ds = fed_dataset.get_client_dataset(client_id)
+        if len(client_ds) > 1:
+            val_len = max(1, int(len(client_ds) * cfg.dataset.val_ratio))
+            train_len = len(client_ds) - val_len
+            train_ds, val_ds = torch.utils.data.random_split(
+                client_ds,
+                [train_len, val_len],
+                generator=torch.Generator().manual_seed(
+                    cfg.dataset.seed or 42
+                ),
+            )
+            dataloader = DataLoader(
+                train_ds, batch_size=cfg.dataset.batch_size, shuffle=True
+            )
+            test_loader = DataLoader(
+                val_ds, batch_size=cfg.dataset.batch_size, shuffle=False
+            )
+    return dataloader, test_loader
 
 
 def main() -> None:
@@ -137,17 +178,11 @@ def main() -> None:
         cfg.training.learning_rate = args.lr
     if args.device is not None:
         cfg.training.device = args.device
+    if args.baseline:
+        cfg.algorithm = args.baseline.lower().strip()
 
-    baseline_name = args.baseline
-    if not baseline_name:
-        cfg_p = Path(args.config)
-        if cfg_p.is_file():
-            with open(cfg_p, "r", encoding="utf-8") as f:
-                raw_yaml = yaml.safe_load(f) or {}
-                baseline_name = raw_yaml.get("baseline", "fedavg")
-        else:
-            baseline_name = "fedavg"
-    baseline_name = str(baseline_name).lower()
+    # Resolve device with shared helper before Node and get_hardware_summary
+    cfg.training.device = resolve_device(cfg.training.device)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -160,7 +195,7 @@ def main() -> None:
 
     print("\n" + "=" * 65)
     print(f"       FEDERATED LEARNING LAB - CLIENT NODE: {node_id}")
-    print(f"       Baseline: {baseline_name.upper()} | Hardware: {hw_info}")
+    print(f"       Baseline: {cfg.algorithm.upper()} | Hardware: {hw_info}")
     print(
         f"       Partition: {cfg.dataset.name} ({cfg.dataset.partition}, alpha={cfg.dataset.alpha}) | Client {args.id + 1}/{cfg.dataset.num_clients}"
     )
@@ -174,45 +209,7 @@ def main() -> None:
         cfg.dataset.partition,
         cfg.dataset.alpha,
     )
-    fed_dataset = FederatedDataset(
-        dataset=cfg.dataset.name,
-        data_dir=cfg.dataset.data_dir,
-        num_clients=cfg.dataset.num_clients,
-        partition=cfg.dataset.partition,
-        alpha=cfg.dataset.alpha,
-        seed=cfg.dataset.seed,
-    )
-    dataloader = fed_dataset.get_client_dataloader(
-        client_id=args.id, batch_size=cfg.dataset.batch_size, shuffle=True
-    )
-    num_samples = len(fed_dataset.get_client_indices(args.id))
-    logger.info(
-        "Local partition ready: %d samples assigned to this client.",
-        num_samples,
-    )
-
-    # Local train and validation data partitioning
-    test_loader = None
-    if cfg.dataset.val_ratio > 0.0 and hasattr(
-        fed_dataset, "get_client_dataset"
-    ):
-        client_ds = fed_dataset.get_client_dataset(args.id)
-        if len(client_ds) > 1:
-            val_len = max(1, int(len(client_ds) * cfg.dataset.val_ratio))
-            train_len = len(client_ds) - val_len
-            train_ds, val_ds = torch.utils.data.random_split(
-                client_ds,
-                [train_len, val_len],
-                generator=torch.Generator().manual_seed(
-                    cfg.dataset.seed or 42
-                ),
-            )
-            dataloader = DataLoader(
-                train_ds, batch_size=cfg.dataset.batch_size, shuffle=True
-            )
-            test_loader = DataLoader(
-                val_ds, batch_size=cfg.dataset.batch_size, shuffle=False
-            )
+    dataloader, test_loader = build_client_dataloaders(cfg, args.id)
 
     model = create_model(cfg.model)
     criterion = create_criterion(cfg.training.loss)
@@ -225,12 +222,11 @@ def main() -> None:
     )
     transport = FederatedClient(target=cfg.server_address)
 
-    _, trainer_cls = get_baseline(baseline_name)
-    trainer = trainer_cls()
+    trainer = create_trainer_from_config(cfg)
     logger.info(
         "Configured baseline client trainer: %s (%s)",
-        baseline_name,
-        trainer_cls.__name__,
+        cfg.algorithm,
+        type(trainer).__name__,
     )
 
     node = Node(

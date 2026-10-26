@@ -22,23 +22,29 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from fl_data_generator import FederatedDataset
+
 from src.baselines import create_server_strategy
 from src.client import create_client_node
 from src.datasets.transforms import get_default_transform
 from src.models.cnn import SimpleCNN
 from src.server.server import FederatedServer
 from src.utils.config import load_unified_config
-from src.utils.evaluation import evaluate_model, get_global_test_loader, parse_client_metrics
+from src.utils.evaluation import (
+    evaluate_model,
+    get_global_test_loader,
+    parse_client_metrics,
+)
+from src.utils.hardware import resolve_device
 from src.utils.serialization import model_to_bytes
 
 logger = logging.getLogger("simulation")
 
 
 def run_federated_simulation(
-    num_clients: int = 3,
-    rounds: int = 2,
-    epochs: int = 1,
-    algorithm: str = "fedavg",
+    num_clients: int | None = None,
+    rounds: int | None = None,
+    epochs: int | None = None,
+    algorithm: str | None = None,
     config_path: str = "configs/config.yaml",
     reports_dir: str | Path = "reports",
     server_port: int = 0,
@@ -81,25 +87,28 @@ def run_federated_simulation(
         Dictionary summarizing simulation results, metrics, and round history.
     """
     u_cfg = load_unified_config(config_path)
-    effective_algo = (algorithm or u_cfg.algorithm or u_cfg.baseline or "fedavg").lower().strip()
-    device_name = device or (u_cfg.device if torch.cuda.is_available() else "cpu")
+    eff_clients = num_clients if num_clients is not None else u_cfg.num_clients
+    eff_rounds = rounds if rounds is not None else u_cfg.rounds
+    eff_epochs = epochs if epochs is not None else u_cfg.epochs
+    eff_algo = (algorithm or u_cfg.algorithm or u_cfg.baseline or "fedavg").lower().strip()
+    device_name = resolve_device(device if device is not None else u_cfg.device)
     target_device = torch.device(device_name)
     seed = u_cfg.seed or 42
 
     logger.info("=" * 70)
     logger.info(
         "Starting %s Simulation (clients=%d, rounds=%d, epochs=%d, device=%s)",
-        effective_algo.upper(),
-        num_clients,
-        rounds,
-        epochs,
+        eff_algo.upper(),
+        eff_clients,
+        eff_rounds,
+        eff_epochs,
         device_name,
     )
     logger.info("=" * 70)
 
     # 1. Instantiate Strategy
     strategy = create_server_strategy(
-        effective_algo,
+        eff_algo,
         config=u_cfg,
         graph_alpha=graph_alpha,
         graph_lam=graph_lam,
@@ -119,25 +128,25 @@ def run_federated_simulation(
     # 3. Base Client Configuration with Overrides
     base_cfg = u_cfg.to_client_config(client_id=0)
     base_cfg.server_address = server_addr
-    base_cfg.dataset.num_clients = num_clients
-    base_cfg.algorithm = effective_algo
+    base_cfg.dataset.num_clients = eff_clients
+    base_cfg.algorithm = eff_algo
     base_cfg.training.device = device_name
 
     # Apply algorithm-specific hyperparameter overrides
-    if effective_algo in ("fedprox", "prox"):
+    if eff_algo in ("fedprox", "prox"):
         eff_mu = mu if mu is not None else getattr(u_cfg.baselines.fedprox, "mu", 0.01)
         base_cfg.fedprox.mu = float(eff_mu)
-    elif effective_algo in ("ditto",):
+    elif eff_algo in ("ditto",):
         eff_lambda = lambda_penalty if lambda_penalty is not None else getattr(u_cfg.baselines.ditto, "lambda_penalty", 0.1)
         eff_pe = personalized_epochs if personalized_epochs is not None else getattr(u_cfg.baselines.ditto, "personalized_epochs", 1)
         base_cfg.ditto.lambda_penalty = float(eff_lambda)
         base_cfg.ditto.personalized_epochs = int(eff_pe)
-    elif effective_algo in ("perfedavg", "per_fedavg", "fomaml"):
+    elif eff_algo in ("perfedavg", "per_fedavg", "fomaml"):
         eff_alpha_lr = alpha_lr if alpha_lr is not None else getattr(u_cfg.baselines.perfedavg, "alpha_lr", 0.01)
         eff_beta_lr = beta_lr if beta_lr is not None else getattr(u_cfg.baselines.perfedavg, "beta_lr", 0.005)
         base_cfg.perfedavg.alpha_lr = float(eff_alpha_lr)
         base_cfg.perfedavg.beta_lr = float(eff_beta_lr)
-    elif effective_algo in ("pfedgraph", "graph"):
+    elif eff_algo in ("pfedgraph", "graph"):
         eff_graph_alpha = graph_alpha if graph_alpha is not None else getattr(u_cfg.baselines.pfedgraph, "alpha", 0.1)
         eff_graph_lam = graph_lam if graph_lam is not None else getattr(u_cfg.baselines.pfedgraph, "lam", 0.01)
         base_cfg.pfedgraph.alpha = float(eff_graph_alpha)
@@ -147,8 +156,8 @@ def run_federated_simulation(
     fed_dataset = None
     synthetic_loaders = []
     if synthetic:
-        logger.info("Using synthetic data partition for %d clients...", num_clients)
-        for _ in range(num_clients):
+        logger.info("Using synthetic data partition for %d clients...", eff_clients)
+        for _ in range(eff_clients):
             inputs = torch.randn(32, 3, 32, 32)
             targets = torch.randint(0, 10, (32,))
             synthetic_loaders.append(
@@ -161,13 +170,13 @@ def run_federated_simulation(
             base_cfg.dataset.name,
             base_cfg.dataset.partition,
             base_cfg.dataset.alpha,
-            num_clients,
+            eff_clients,
         )
         transform = get_default_transform(base_cfg.dataset.name)
         fed_dataset = FederatedDataset(
             dataset=base_cfg.dataset.name,
             data_dir=base_cfg.dataset.data_dir,
-            num_clients=num_clients,
+            num_clients=eff_clients,
             partition=base_cfg.dataset.partition,
             alpha=base_cfg.dataset.alpha,
             seed=base_cfg.dataset.seed,
@@ -183,14 +192,14 @@ def run_federated_simulation(
     # 5. Initialize and Register Client Nodes
     nodes = []
     try:
-        for i in range(num_clients):
+        for i in range(eff_clients):
             node_id = f"client_{i}"
             if synthetic:
                 node = create_client_node(
                     base_cfg,
                     load_dataset=False,
                     client_id=i,
-                    num_clients=num_clients,
+                    num_clients=eff_clients,
                     node_id=node_id,
                 )
                 node.data = synthetic_loaders[i]
@@ -200,7 +209,7 @@ def run_federated_simulation(
                     base_cfg,
                     load_dataset=True,
                     client_id=i,
-                    num_clients=num_clients,
+                    num_clients=eff_clients,
                     node_id=node_id,
                     fed_dataset=fed_dataset,
                 )
@@ -213,9 +222,9 @@ def run_federated_simulation(
 
         # 6. Execute Federated Rounds
         round_history = []
-        for r in range(1, rounds + 1):
+        for r in range(1, eff_rounds + 1):
             t_start = time.time()
-            responses = server.trigger_round(round_id=r, epochs=epochs, aggregate=True)
+            responses = server.trigger_round(round_id=r, epochs=eff_epochs, aggregate=True)
             elapsed = time.time() - t_start
 
             successful = [res for res in responses if res.success]
@@ -242,11 +251,11 @@ def run_federated_simulation(
                 )
                 global_acc = float(eval_metrics.get("accuracy", 0.0))
 
-            acc_label = "Personalized Local Acc" if effective_algo in ("ditto", "perfedavg", "pfedgraph") else "Local Acc"
+            acc_label = "Personalized Local Acc" if eff_algo in ("ditto", "perfedavg", "pfedgraph") else "Local Acc"
             logger.info(
                 "Round %d/%d completed in %.2fs: Global Acc: %.2f%% | Mean %s: %.2f%% | Client Accs: %s",
                 r,
-                rounds,
+                eff_rounds,
                 elapsed,
                 global_acc * 100,
                 acc_label,
@@ -266,13 +275,13 @@ def run_federated_simulation(
             }
 
             # If pFedGraph, record adjacency matrix
-            if effective_algo == "pfedgraph" and hasattr(strategy, "adjacency_matrix") and strategy.adjacency_matrix is not None:
+            if eff_algo == "pfedgraph" and hasattr(strategy, "adjacency_matrix") and strategy.adjacency_matrix is not None:
                 round_record["adjacency_matrix"] = strategy.adjacency_matrix.cpu().numpy().tolist()
 
             round_history.append(round_record)
 
         final_weights = server.get_global_weights()
-        logger.info("%s federated simulation completed successfully across %d rounds.", effective_algo.upper(), rounds)
+        logger.info("%s federated simulation completed successfully across %d rounds.", eff_algo.upper(), eff_rounds)
 
         # Build standardized reporting history and save baseline artifacts
         reporting_history = []
@@ -298,7 +307,7 @@ def run_federated_simulation(
         try:
             from src.utils.reporting import save_baseline_report
             artifacts = save_baseline_report(
-                baseline_name=effective_algo,
+                baseline_name=eff_algo,
                 round_history=reporting_history,
                 output_dir=str(reports_dir),
             )
@@ -307,16 +316,16 @@ def run_federated_simulation(
             artifacts = {}
 
         result: dict[str, Any] = {
-            "algorithm": effective_algo,
-            "num_clients": num_clients,
-            "rounds_completed": rounds,
+            "algorithm": eff_algo,
+            "num_clients": eff_clients,
+            "rounds_completed": eff_rounds,
             "round_history": round_history,
             "initial_model_weights": initial_weights,
             "final_model_weights": final_weights,
             "artifacts": artifacts,
         }
 
-        if effective_algo == "pfedgraph" and hasattr(strategy, "adjacency_matrix") and strategy.adjacency_matrix is not None:
+        if eff_algo == "pfedgraph" and hasattr(strategy, "adjacency_matrix") and strategy.adjacency_matrix is not None:
             w_np = strategy.adjacency_matrix.cpu().numpy()
             result["final_adjacency_matrix"] = w_np.tolist()
             print("\n" + "=" * 50)
@@ -356,7 +365,7 @@ def main() -> None:
         "--algorithm",
         "-a",
         type=str,
-        default="fedavg",
+        default=None,
         choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph"],
         help="Federated optimization algorithm baseline",
     )
@@ -364,21 +373,21 @@ def main() -> None:
         "--clients",
         "-c",
         type=int,
-        default=3,
+        default=None,
         help="Number of client nodes in the simulation",
     )
     parser.add_argument(
         "--rounds",
         "-r",
         type=int,
-        default=2,
+        default=None,
         help="Number of federated aggregation rounds",
     )
     parser.add_argument(
         "--epochs",
         "-e",
         type=int,
-        default=1,
+        default=None,
         help="Number of local client training epochs per round",
     )
     parser.add_argument(
