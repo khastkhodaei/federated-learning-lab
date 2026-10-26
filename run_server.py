@@ -1,19 +1,21 @@
-from src.config import load_unified_config
-
 """Standalone central federated server runner.
 
 Starts the central coordinator, waits for the configured number of clients to
-register over gRPC, broadcasts the global model, and orchestrates federated
-training rounds with FedAvg aggregation and publication-grade evaluation.
+register over gRPC, broadcasts models, and orchestrates federated
+training rounds with aggregation and publication-grade evaluation.
 """
 
 import argparse
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import torch
 
+from src.baselines import create_server_strategy
+from src.config import UnifiedConfig, load_unified_config
 from src.models.cnn import SimpleCNN
 from src.server.server import FederatedServer
 from src.utils.evaluation import (
@@ -27,6 +29,100 @@ from src.utils.reporting import save_baseline_report
 from src.utils.serialization import model_to_bytes
 
 
+@dataclass
+class ServerSettings:
+    """Resolved settings for central federated server coordinator."""
+
+    host: str
+    port: int
+    num_clients: int
+    rounds: int
+    epochs: int
+    device: str
+    seed: int
+    baseline: str
+
+    @property
+    def clients(self) -> int:
+        """Alias for num_clients for backward compatibility."""
+        return self.num_clients
+
+    def __getitem__(self, key: str) -> Any:
+        if key == "clients":
+            return self.num_clients
+        return getattr(self, key)
+
+
+def _get_override(obj: Any, *keys: str) -> Any:
+    for k in keys:
+        if isinstance(obj, dict) and k in obj and obj[k] is not None:
+            return obj[k]
+        val = getattr(obj, k, None)
+        if val is not None:
+            return val
+    return None
+
+
+def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
+    """Resolves server configuration settings by combining CLI overrides with UnifiedConfig defaults.
+
+    CLI arguments take precedence only when explicitly provided (non-None).
+    """
+    host_override = _get_override(args, "host")
+    port_override = _get_override(args, "port")
+    clients_override = _get_override(args, "clients", "num_clients")
+    rounds_override = _get_override(args, "rounds")
+    epochs_override = _get_override(args, "epochs")
+    seed_override = _get_override(args, "seed")
+    device_override = _get_override(args, "device")
+    baseline_override = _get_override(args, "baseline")
+
+    host = host_override if host_override is not None else getattr(u_cfg, "server_host", "127.0.0.1")
+    port = port_override if port_override is not None else getattr(u_cfg, "server_port", 50051)
+    num_clients = clients_override if clients_override is not None else getattr(u_cfg, "num_clients", 3)
+    rounds = rounds_override if rounds_override is not None else getattr(u_cfg, "rounds", 15)
+    epochs = epochs_override if epochs_override is not None else getattr(u_cfg, "epochs", 1)
+
+    if seed_override is not None:
+        seed = seed_override
+    else:
+        cfg_seed = getattr(u_cfg, "seed", None)
+        if cfg_seed is not None:
+            seed = cfg_seed
+        elif hasattr(u_cfg, "model") and getattr(u_cfg.model, "seed", None) is not None:
+            seed = u_cfg.model.seed
+        else:
+            seed = 42
+
+    if device_override is not None:
+        device = device_override
+    else:
+        cfg_dev = getattr(u_cfg, "device", None)
+        if cfg_dev is not None:
+            device = cfg_dev
+        elif hasattr(u_cfg, "experiment") and getattr(u_cfg.experiment, "device", None) is not None:
+            device = u_cfg.experiment.device
+        else:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    if baseline_override is not None:
+        baseline = str(baseline_override).lower().strip()
+    else:
+        raw_b = getattr(u_cfg, "baseline", None) or getattr(u_cfg, "algorithm", "fedavg")
+        baseline = str(raw_b).lower().strip()
+
+    return ServerSettings(
+        host=str(host),
+        port=int(port),
+        num_clients=int(num_clients),
+        rounds=int(rounds),
+        epochs=int(epochs),
+        device=str(device),
+        seed=int(seed),
+        baseline=str(baseline),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Federated Learning Lab - Central Server",
@@ -38,6 +134,13 @@ def main() -> None:
         type=str,
         default="configs/config.yaml",
         help="Path to unified YAML configuration",
+    )
+    parser.add_argument(
+        "--host",
+        "-H",
+        type=str,
+        default=None,
+        help="Server host address (overrides config)",
     )
     parser.add_argument(
         "--port",
@@ -93,27 +196,9 @@ def main() -> None:
     if cfg_path.is_file():
         u_cfg = load_unified_config(cfg_path)
     else:
-        from src.config import UnifiedConfig
         u_cfg = UnifiedConfig()
 
-    port = args.port if args.port is not None else u_cfg.server.port
-    num_clients = (
-        args.clients
-        if args.clients is not None
-        else u_cfg.federated.num_clients
-    )
-    rounds = args.rounds if args.rounds is not None else u_cfg.federated.rounds
-    epochs = (
-        args.epochs
-        if args.epochs is not None
-        else u_cfg.federated.epochs_per_round
-    )
-    seed = (
-        args.seed
-        if args.seed is not None
-        else u_cfg.model.seed
-    )
-    baseline_name = (args.baseline or u_cfg.baseline).lower()
+    settings = resolve_server_settings(args, u_cfg)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -122,43 +207,35 @@ def main() -> None:
     )
     logger = logging.getLogger("server")
 
-    server_device_name = (
-        args.device
-        if args.device is not None
-        else (u_cfg.experiment.device if hasattr(u_cfg, "experiment") else ("cuda" if torch.cuda.is_available() else "cpu"))
-    )
-    server_device = torch.device(server_device_name)
-    hw_info = get_hardware_summary(server_device_name)
+    server_device = torch.device(settings.device)
+    hw_info = get_hardware_summary(settings.device)
 
     print("\n" + "=" * 65)
     print("       FEDERATED LEARNING LAB - CENTRAL COORDINATOR SERVER")
-    print(f"       Baseline: {baseline_name.upper()} | Hardware: {hw_info}")
+    print(f"       Baseline: {settings.baseline.upper()} | Hardware: {hw_info}")
     print(
-        f"       Port: {port} | Required Clients: {num_clients} | Rounds: {rounds} | Epochs: {epochs}"
+        f"       Host: {settings.host} | Port: {settings.port} | Required Clients: {settings.num_clients} | Rounds: {settings.rounds} | Epochs: {settings.epochs}"
     )
     print(f"       Config: {args.config}")
     print("=" * 65 + "\n")
 
-    logger.info("Initializing global SimpleCNN model (seed=%d) on %s...", seed, server_device_name)
-    global_model = SimpleCNN(seed=seed).to(server_device)
+    logger.info("Initializing global SimpleCNN model (seed=%d) on %s...", settings.seed, settings.device)
+    global_model = SimpleCNN(seed=settings.seed).to(server_device)
     initial_weights = model_to_bytes(global_model)
     logger.info("Global model initialized (%d bytes).", len(initial_weights))
 
-    from src.baselines import get_baseline
-
-    strategy_cls, _ = get_baseline(baseline_name)
-    strategy = strategy_cls()
+    strategy = create_server_strategy(settings.baseline, config=u_cfg)
     logger.info(
         "Configured baseline aggregation strategy: %s (%s)",
-        baseline_name,
-        strategy_cls.__name__,
+        settings.baseline,
+        strategy.__class__.__name__,
     )
 
     server = FederatedServer(
-        host="0.0.0.0", port=port, model=global_model, strategy=strategy
+        host=settings.host, port=settings.port, model=global_model, strategy=strategy
     )
     server.start()
-    logger.info("Central Server is listening on 0.0.0.0:%d", server.bound_port)
+    logger.info("Central Server is listening on %s:%d", settings.host, server.bound_port)
 
     # Pre-load global held-out evaluation test set
     try:
@@ -180,21 +257,21 @@ def main() -> None:
         )
         global_test_loader = None
 
-    logger.info("Waiting for %d client(s) to connect and register...", num_clients)
+    logger.info("Waiting for %d client(s) to connect and register...", settings.num_clients)
     last_count = 0
     while True:
         registered = len(server.servicer.registered_nodes)
         if registered != last_count:
             nodes_list = list(server.servicer.registered_nodes.keys())
             logger.info(
-                "Registered clients (%d/%d): %s", registered, num_clients, nodes_list
+                "Registered clients (%d/%d): %s", registered, settings.num_clients, nodes_list
             )
             last_count = registered
 
-        if registered >= num_clients:
+        if registered >= settings.num_clients:
             logger.info(
                 "All %d clients connected! Starting training rounds in 2 seconds...",
-                num_clients,
+                settings.num_clients,
             )
             time.sleep(2)
             break
@@ -202,23 +279,26 @@ def main() -> None:
 
     try:
         round_history = []
-        for r in range(1, rounds + 1):
+        for r in range(1, settings.rounds + 1):
             print("\n" + "-" * 55)
-            logger.info(">>> STARTING FEDERATED ROUND %d / %d", r, rounds)
+            logger.info(">>> STARTING FEDERATED ROUND %d / %d", r, settings.rounds)
             print("-" * 55)
 
-            weights_to_send = server.get_global_weights()
+            payload_desc = (
+                f"{len(server.client_weights)} client models"
+                if server.client_weights
+                else f"global model ({len(server.get_global_weights())} bytes)"
+            )
             logger.info(
-                "Broadcasting global model weights (%d bytes) to %d clients...",
-                len(weights_to_send),
+                "Dispatching %s to %d clients...",
+                payload_desc,
                 len(server.servicer.registered_nodes),
             )
 
             start_time = time.time()
             responses = server.trigger_round(
                 round_id=r,
-                weights=weights_to_send,
-                epochs=epochs,
+                epochs=settings.epochs,
                 aggregate=True,
             )
             elapsed = time.time() - start_time
@@ -295,7 +375,7 @@ def main() -> None:
                 r,
                 elapsed,
                 len(successful),
-                num_clients,
+                settings.num_clients,
                 round_loss,
                 global_acc * 100,
                 fairness["mean"] * 100,
@@ -304,19 +384,19 @@ def main() -> None:
             )
             logger.info(
                 "%s aggregation complete. Global model updated for round %d.",
-                strategy_cls.__name__,
+                strategy.__class__.__name__,
                 r,
             )
 
         print("\n" + "=" * 65)
         logger.info(
-            "All %d federated training rounds completed successfully!", rounds
+            "All %d federated training rounds completed successfully!", settings.rounds
         )
         print("=" * 65 + "\n")
 
         # Automatically save structured baseline report and training progression charts
         artifacts = save_baseline_report(
-            baseline_name=baseline_name, round_history=round_history
+            baseline_name=settings.baseline, round_history=round_history
         )
         logger.info("Baseline report artifacts generated successfully:")
         logger.info("  [Metrics JSON]    %s", artifacts["metrics_json"])

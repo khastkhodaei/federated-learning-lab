@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from fl_data_generator import FederatedDataset
-from src.baselines import get_baseline
+from src.baselines import create_server_strategy
 from src.client import create_client_node
 from src.datasets.transforms import get_default_transform
 from src.models.cnn import SimpleCNN
@@ -95,13 +95,12 @@ def run_federated_simulation(
     logger.info("=" * 70)
 
     # 1. Instantiate Strategy
-    strategy_cls, _ = get_baseline(effective_algo)
-    if effective_algo == "pfedgraph":
-        eff_graph_alpha = graph_alpha if graph_alpha is not None else getattr(u_cfg.baselines.pfedgraph, "alpha", 0.1)
-        eff_graph_lam = graph_lam if graph_lam is not None else getattr(u_cfg.baselines.pfedgraph, "lam", 0.01)
-        strategy = strategy_cls(alpha=eff_graph_alpha, lam=eff_graph_lam)
-    else:
-        strategy = strategy_cls()
+    strategy = create_server_strategy(
+        effective_algo,
+        config=u_cfg,
+        graph_alpha=graph_alpha,
+        graph_lam=graph_lam,
+    )
 
     # 2. Setup Central Coordinator Server
     global_model = SimpleCNN(seed=seed).to(target_device)
