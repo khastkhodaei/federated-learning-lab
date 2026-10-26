@@ -67,6 +67,14 @@ class FedProxClientConfig:
 
 
 @dataclass
+class DittoClientConfig:
+    """Hyperparameters for Ditto on the client."""
+
+    lambda_penalty: float = 0.1
+    personalized_epochs: int = 1
+
+
+@dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
 
@@ -79,6 +87,7 @@ class ClientConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     fedprox: FedProxClientConfig = field(default_factory=FedProxClientConfig)
+    ditto: DittoClientConfig = field(default_factory=DittoClientConfig)
 
 
 def load_client_config(
@@ -157,6 +166,12 @@ def load_client_config(
     fedprox_data = data.get("fedprox", {}) or data.get("baselines", {}).get("fedprox", {})
     fedprox_cfg = FedProxClientConfig(mu=float(fedprox_data.get("mu", 0.01)))
 
+    ditto_data = data.get("ditto", {}) or data.get("baselines", {}).get("ditto", {})
+    ditto_cfg = DittoClientConfig(
+        lambda_penalty=float(ditto_data.get("lambda_penalty", ditto_data.get("lambda", 0.1))),
+        personalized_epochs=int(ditto_data.get("personalized_epochs", 1)),
+    )
+
     return ClientConfig(
         node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
@@ -167,6 +182,7 @@ def load_client_config(
         dataset=dataset_cfg,
         training=training_cfg,
         fedprox=fedprox_cfg,
+        ditto=ditto_cfg,
     )
 
 
@@ -223,11 +239,20 @@ def create_model(model_cfg: ModelConfig) -> nn.Module:
 def create_trainer(
     algorithm: str = "fedavg",
     mu: float = 0.01,
+    lambda_penalty: float = 0.1,
+    personalized_epochs: int = 1,
     **kwargs: Any,
 ) -> Any:
     """Factory creating a ClientTrainer instance according to the selected algorithm."""
     algo = algorithm.lower().strip()
-    if algo in ("fedprox", "prox"):
+    if algo in ("ditto",):
+        from src.baselines.ditto.trainer import DittoClientTrainer
+
+        return DittoClientTrainer(
+            lambda_penalty=lambda_penalty,
+            personalized_epochs=personalized_epochs,
+        )
+    elif algo in ("fedprox", "prox"):
         from src.baselines.fedprox.trainer import FedProxClientTrainer
 
         return FedProxClientTrainer(mu=mu)
@@ -379,7 +404,19 @@ def create_client_node(
         algorithm_name = getattr(config, "algorithm", "fedavg")
         fedprox_cfg = getattr(config, "fedprox", None)
         mu_val = getattr(fedprox_cfg, "mu", 0.01) if fedprox_cfg is not None else 0.01
-        trainer_instance = create_trainer(algorithm=algorithm_name, mu=mu_val)
+        ditto_cfg = getattr(config, "ditto", None)
+        lambda_val = (
+            getattr(ditto_cfg, "lambda_penalty", 0.1) if ditto_cfg is not None else 0.1
+        )
+        pers_epochs = (
+            getattr(ditto_cfg, "personalized_epochs", 1) if ditto_cfg is not None else 1
+        )
+        trainer_instance = create_trainer(
+            algorithm=algorithm_name,
+            mu=mu_val,
+            lambda_penalty=lambda_val,
+            personalized_epochs=pers_epochs,
+        )
 
     # 5. Transport
     transport = None

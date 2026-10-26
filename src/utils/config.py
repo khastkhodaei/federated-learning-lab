@@ -96,11 +96,20 @@ class PdflConfig:
 
 
 @dataclass
+class DittoConfig:
+    """Hyperparameters for Ditto personalized federated learning."""
+
+    lambda_penalty: float = 0.1
+    personalized_epochs: int = 1
+
+
+@dataclass
 class BaselinesConfig:
     """Registry of typed baseline-specific hyperparameter configurations."""
 
     fedavg: FedAvgConfig = field(default_factory=FedAvgConfig)
     fedprox: FedProxConfig = field(default_factory=FedProxConfig)
+    ditto: DittoConfig = field(default_factory=DittoConfig)
     scaffold: ScaffoldConfig = field(default_factory=ScaffoldConfig)
     pdfl: PdflConfig = field(default_factory=PdflConfig)
 
@@ -148,10 +157,13 @@ class UnifiedConfig:
         self, client_id: int, client_port: int = 0
     ) -> ClientConfig:
         """Translates unified parameters into individual client node specifications."""
-        from src.client.config import FedProxClientConfig
+        from src.client.config import DittoClientConfig, FedProxClientConfig
 
         algo = (self.algorithm or self.baseline).lower().strip()
         fedprox_mu = getattr(self.baselines.fedprox, "mu", 0.01)
+        ditto_cfg = getattr(self.baselines, "ditto", None)
+        ditto_lambda = getattr(ditto_cfg, "lambda_penalty", 0.1) if ditto_cfg else 0.1
+        ditto_epochs = getattr(ditto_cfg, "personalized_epochs", 1) if ditto_cfg else 1
 
         return ClientConfig(
             node_id=f"client_{client_id}",
@@ -185,6 +197,9 @@ class UnifiedConfig:
                 device=self.device,
             ),
             fedprox=FedProxClientConfig(mu=fedprox_mu),
+            ditto=DittoClientConfig(
+                lambda_penalty=ditto_lambda, personalized_epochs=ditto_epochs
+            ),
         )
 
 
@@ -254,11 +269,16 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
     # 4. Baselines Config
     bl_data = raw.get("baselines", {})
     fedprox_data = bl_data.get("fedprox", {})
+    ditto_data = bl_data.get("ditto", {})
     pdfl_data = bl_data.get("pdfl", {})
 
     bl_cfg = BaselinesConfig(
         fedavg=FedAvgConfig(),
         fedprox=FedProxConfig(mu=float(fedprox_data.get("mu", 0.01))),
+        ditto=DittoConfig(
+            lambda_penalty=float(ditto_data.get("lambda_penalty", ditto_data.get("lambda", 0.1))),
+            personalized_epochs=int(ditto_data.get("personalized_epochs", 1)),
+        ),
         scaffold=ScaffoldConfig(),
         pdfl=PdflConfig(
             similarity_threshold=float(

@@ -167,21 +167,27 @@ class Node:
         Returns:
             Dictionary with 'loss', 'accuracy', 'correct', and 'total'.
         """
+        eval_model = self.model
         if self.model is not None and weights is not None:
             load_bytes_into_model(weights, self.model)
+            eval_model = self.model
+        elif hasattr(self.trainer, "personalized_model") and getattr(self.trainer, "personalized_model") is not None:
+            eval_model = getattr(self.trainer, "personalized_model")
+        elif hasattr(self, "personalized_model") and getattr(self, "personalized_model") is not None:
+            eval_model = getattr(self, "personalized_model")
 
         eval_loader = (
             dataloader
             if dataloader is not None
             else (self.test_data if self.test_data is not None else self.data)
         )
-        if self.model is None or eval_loader is None:
+        if eval_model is None or eval_loader is None:
             return {"loss": 0.0, "accuracy": 0.0, "correct": 0, "total": 0}
 
         from src.utils.evaluation import evaluate_model
 
         return evaluate_model(
-            model=self.model,
+            model=eval_model,
             dataloader=eval_loader,
             criterion=self.criterion,
             device=self.device,
