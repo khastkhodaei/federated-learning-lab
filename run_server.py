@@ -18,6 +18,7 @@ from src.baselines import create_server_strategy
 from src.config import UnifiedConfig, load_unified_config
 from src.models.cnn import SimpleCNN
 from src.server.server import FederatedServer
+from src.transport.federated_pb2 import TrainResponse
 from src.utils.evaluation import (
     compute_fairness_metrics,
     evaluate_model,
@@ -42,6 +43,7 @@ class ServerSettings:
     seed: int
     baseline: str
     report_dir: str = "reports"
+    round_timeout: float = 60.0
 
     @property
     def clients(self) -> int:
@@ -115,6 +117,13 @@ def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
         raw_b = getattr(u_cfg, "baseline", None) or getattr(u_cfg, "algorithm", "fedavg")
         baseline = str(raw_b).lower().strip()
 
+    timeout_override = _get_override(args, "round_timeout", "timeout")
+    round_timeout = float(timeout_override) if timeout_override is not None else 60.0
+    if round_timeout <= 0.0:
+        raise ValueError(
+            f"round_timeout must be strictly positive (> 0), got {round_timeout}"
+        )
+
     return ServerSettings(
         host=str(host),
         port=int(port),
@@ -125,6 +134,19 @@ def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
         seed=int(seed),
         baseline=str(baseline),
         report_dir=str(report_dir),
+        round_timeout=float(round_timeout),
+    )
+
+
+def dispatch_round(
+    server: FederatedServer, settings: ServerSettings, round_id: int
+) -> list[TrainResponse]:
+    """Dispatches a training round to all registered clients and aggregates responses."""
+    return server.trigger_round(
+        round_id=round_id,
+        epochs=settings.epochs,
+        timeout=settings.round_timeout,
+        aggregate=True,
     )
 
 
@@ -195,9 +217,15 @@ def main() -> None:
         help="Baseline aggregation strategy (default: fedavg)",
     )
     parser.add_argument(
+        "--round-timeout",
+        type=float,
+        default=None,
+        help="Per-round client response timeout in seconds (default: 60.0)",
+    )
+    parser.add_argument(
         "--report-dir",
         type=str,
-        default="reports",
+        default=None,
         help="Directory to save baseline report artifacts (default: reports)",
     )
     args = parser.parse_args()
@@ -307,11 +335,7 @@ def main() -> None:
             )
 
             start_time = time.time()
-            responses = server.trigger_round(
-                round_id=r,
-                epochs=settings.epochs,
-                aggregate=True,
-            )
+            responses = dispatch_round(server, settings, round_id=r)
             elapsed = time.time() - start_time
 
             successful = [res for res in responses if res.success]

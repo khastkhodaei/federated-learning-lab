@@ -266,6 +266,12 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
+    # Reject files containing legacy split keys without top-level unified keys
+    if "server_address" in raw and "server_host" not in raw and "server_port" not in raw:
+        raise ValueError(
+            "Legacy client configuration detected. Please use the unified 'configs/config.yaml'."
+        )
+
     # Validate algorithm vs baseline consistency if both are explicitly present
     raw_algo = raw.get("algorithm")
     raw_base = raw.get("baseline")
