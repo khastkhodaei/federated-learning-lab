@@ -1,4 +1,3 @@
-import pytest
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -7,12 +6,11 @@ from src.baselines import get_baseline
 from src.baselines.pfedgraph import (
     PFedGraphClientTrainer,
     PFedGraphServerStrategy,
-    PFedGraphTrainer,
 )
 from src.baselines.pfedgraph.strategy import project_to_simplex
-from src.client.config import ClientConfig, create_client_node, create_trainer
+from src.client.config import create_trainer
 from src.models.cnn import SimpleCNN
-from src.utils.serialization import bytes_to_vector, model_to_bytes
+from src.utils.serialization import model_to_bytes
 
 
 def test_project_to_simplex() -> None:
@@ -120,3 +118,33 @@ def test_pfedgraph_client_trainer() -> None:
     assert updated_weights != initial_weights
     assert num_samples == 16
     assert "loss" in metrics
+
+
+def test_pfedgraph_deterministic_client_order_permutation() -> None:
+    m1 = SimpleCNN(seed=1)
+    m2 = SimpleCNN(seed=2)
+    b1 = model_to_bytes(m1)
+    b2 = model_to_bytes(m2)
+
+    strat_a = PFedGraphServerStrategy(alpha=0.5, lam=0.01)
+    strat_b = PFedGraphServerStrategy(alpha=0.5, lam=0.01)
+
+    strat_a.aggregate(
+        global_model=None,
+        client_updates=[(b1, 100), (b2, 200)],
+        round_id=1,
+        client_ids=["client_0", "client_1"],
+    )
+    strat_b.aggregate(
+        global_model=None,
+        client_updates=[(b2, 200), (b1, 100)],
+        round_id=1,
+        client_ids=["client_1", "client_0"],
+    )
+
+    assert strat_a.client_ids == ["client_0", "client_1"]
+    assert strat_b.client_ids == ["client_0", "client_1"]
+    assert torch.allclose(strat_a.adjacency_matrix, strat_b.adjacency_matrix, atol=1e-5)
+    assert strat_a.client_weights["client_0"] == strat_b.client_weights["client_0"]
+    assert strat_a.client_weights["client_1"] == strat_b.client_weights["client_1"]
+

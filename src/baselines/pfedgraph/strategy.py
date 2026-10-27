@@ -5,7 +5,6 @@ pairwise parameter distances and regularization. Aggregates personalized models 
 Reference: Chen et al., 'pFedGraph: Personalized Federated Learning via Graph'.
 """
 
-import copy
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -14,7 +13,12 @@ import torch
 from torch import nn
 
 from src.baselines.base import ServerStrategy
-from src.utils.serialization import bytes_to_vector, load_bytes_into_model, model_to_bytes, vector_to_bytes
+from src.utils.serialization import (
+    bytes_to_vector,
+    load_bytes_into_model,
+    model_to_bytes,
+    vector_to_bytes,
+)
 
 logger = logging.getLogger("pfedgraph.strategy")
 
@@ -152,17 +156,24 @@ class PFedGraphServerStrategy(ServerStrategy):
 
         k = len(client_updates)
         if client_ids is not None and len(client_ids) == k:
-            self.client_ids = [str(cid) for cid in client_ids]
+            paired = sorted(
+                zip(client_ids, client_updates, strict=True),
+                key=lambda x: str(x[0]),
+            )
+            self.client_ids = [str(p[0]) for p in paired]
+            effective_updates = [p[1] for p in paired]
         else:
             self.client_ids = [f"client_{i}" for i in range(k)]
+            effective_updates = list(client_updates)
 
         # 1. Unpack client updates to flattened parameter vectors
         vectors: list[torch.Tensor] = []
         sample_counts: list[int] = []
-        for weights_bytes, num_samples in client_updates:
+        for weights_bytes, num_samples in effective_updates:
             vec = bytes_to_vector(weights_bytes)
             vectors.append(vec)
             sample_counts.append(max(1, num_samples))
+
 
         stacked_vectors = torch.stack(vectors, dim=0)  # (K, P)
 
