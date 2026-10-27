@@ -287,6 +287,7 @@ if __name__ == "__main__":
         config_path = sys.argv[1]
         print(f"\n>>> Starting Node from config: '{config_path}'...\n")
         node = create_client_node(config_path, load_dataset=True)
+        node_id = node.node_id
     else:
         node_id = sys.argv[1] if len(sys.argv) > 1 else "client_1"
         server_address = sys.argv[2] if len(sys.argv) > 2 else "localhost:50051"
@@ -306,12 +307,16 @@ if __name__ == "__main__":
     print(f"Server response: {update_res.message if update_res else 'Failed'}\n")
 
     if node.server is not None:
-        print(f">>> Node {node_id} is listening on {node.address}. Press Ctrl+C to stop.\n")
+        print(f">>> Node {node.node_id} is listening on {node.address}. Press Ctrl+C to stop.\n")
         try:
             node.server.wait_for_termination()
         except KeyboardInterrupt:
             print("\nStopping node...")
             node.stop(grace=1)
 
-    transport.close()
+    if "node" in locals() and getattr(node, "transport", None) is not None:
+        node.transport.close()
+    elif "transport" in locals() and transport is not None:
+        transport.close()
     print("Done.")
+

@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock
+
 import grpc
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -12,7 +13,7 @@ from src.transport.federated_pb2 import (
     UpdateResponse,
 )
 from src.transport.federated_pb2_grpc import NodeServiceStub
-from src.utils.serialization import bytes_to_vector, model_to_bytes
+from src.utils.serialization import model_to_bytes
 
 
 def test_node_creation() -> None:
@@ -142,3 +143,43 @@ def test_node_on_train_round_execution() -> None:
     # Returned weights should differ from server weights because local gradient step occurred
     assert response.weights != server_weights
     assert len(response.weights) == len(server_weights)
+
+
+def test_node_standalone_script_config_execution(monkeypatch) -> None:
+    import runpy
+    from unittest.mock import patch
+
+    mock_node = MagicMock()
+    mock_node.node_id = "client_config_test"
+    mock_node.address = "127.0.0.1:50055"
+    mock_node.server = None
+    mock_transport = MagicMock()
+    mock_node.transport = mock_transport
+    mock_node.register.return_value = MagicMock(message="OK")
+    mock_node.send_update.return_value = MagicMock(message="OK")
+
+    monkeypatch.setattr("sys.argv", ["src/client/node.py", "configs/client.yaml"])
+    with patch("src.client.config.create_client_node", return_value=mock_node):
+        runpy.run_module("src.client.node", run_name="__main__")
+
+    mock_transport.close.assert_called_once()
+
+
+def test_node_standalone_script_args_execution(monkeypatch) -> None:
+    import runpy
+    from unittest.mock import patch
+
+    mock_transport = MagicMock()
+    mock_transport.register_node.return_value = MagicMock(message="OK")
+    mock_transport.submit_update.return_value = MagicMock(message="OK")
+
+    monkeypatch.setattr(
+        "sys.argv", ["src/client/node.py", "client_args_test", "localhost:50051", "0"]
+    )
+    mock_server = MagicMock()
+    with patch("src.transport.client.FederatedClient", return_value=mock_transport), patch(
+        "grpc.server", return_value=mock_server
+    ):
+        runpy.run_module("src.client.node", run_name="__main__")
+
+    mock_transport.close.assert_called_once()
