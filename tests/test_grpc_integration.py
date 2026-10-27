@@ -1,6 +1,10 @@
 import torch
+from torch.utils.data import DataLoader, TensorDataset
+
+from src.baselines.fedavg.strategy import FedAvgServerStrategy
 from src.client.node import Node
 from src.models.cnn import SimpleCNN
+from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
 from src.transport.client import FederatedClient
 from src.utils.serialization import model_to_vector
@@ -97,3 +101,74 @@ def test_node_synchronizes_initial_model_from_server_over_grpc() -> None:
         transport1.close()
         transport2.close()
         server.stop(grace=0)
+
+
+def test_live_grpc_round_dispatch_and_aggregation() -> None:
+    """Verifies that a real training round executed via dispatch_round aggregates client
+
+    weights over live gRPC and updates the server global model parameters.
+    """
+    server = FederatedServer(
+        host="127.0.0.1",
+        port=0,
+        model=SimpleCNN(seed=42),
+        strategy=FedAvgServerStrategy(),
+    )
+    server.start()
+    server_addr = f"127.0.0.1:{server.bound_port}"
+
+    assert server.global_model is not None
+    initial_server_vec = model_to_vector(server.global_model).clone()
+
+    # Create small synthetic datasets for local training
+    inputs1 = torch.randn(8, 3, 32, 32)
+    targets1 = torch.randint(0, 10, (8,))
+    loader1 = DataLoader(TensorDataset(inputs1, targets1), batch_size=4)
+
+    inputs2 = torch.randn(8, 3, 32, 32)
+    targets2 = torch.randint(0, 10, (8,))
+    loader2 = DataLoader(TensorDataset(inputs2, targets2), batch_size=4)
+
+    transport1 = FederatedClient(target=server_addr)
+    transport2 = FederatedClient(target=server_addr)
+
+    node1 = Node(
+        node_id="client_1",
+        model=SimpleCNN(seed=1),
+        data=loader1,
+        transport=transport1,
+        port=0,
+    )
+    node2 = Node(
+        node_id="client_2",
+        model=SimpleCNN(seed=2),
+        data=loader2,
+        transport=transport2,
+        port=0,
+    )
+
+    try:
+        r1 = node1.register()
+        r2 = node2.register()
+        assert r1 and r1.success
+        assert r2 and r2.success
+        assert len(server.servicer.registered_nodes) == 2
+
+        # Dispatch round with real training and aggregation
+        responses = dispatch_round(server, round_id=1, epochs=1, timeout=10.0)
+        assert len(responses) == 2
+        for r in responses:
+            assert r.success is True
+            assert r.num_samples == 8
+
+        # Verify global model parameters have updated through aggregation
+        updated_server_vec = model_to_vector(server.global_model)
+        assert not torch.allclose(updated_server_vec, initial_server_vec)
+
+    finally:
+        node1.stop(grace=0)
+        node2.stop(grace=0)
+        transport1.close()
+        transport2.close()
+        server.stop(grace=0)
+

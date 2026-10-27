@@ -18,9 +18,11 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from fl_data_generator import FederatedDataset
+
 from src.client import create_client_node
 from src.datasets.transforms import get_default_transform
 from src.models.cnn import SimpleCNN
+from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
 from src.utils.config import load_unified_config
 from src.utils.evaluation import (
@@ -133,13 +135,7 @@ def run_experiment(config_path: str = "configs/config.yaml") -> dict:
 
         for r in range(1, rounds + 1):
             t_start = time.time()
-            weights = server.get_global_weights()
-            responses = server.trigger_round(
-                round_id=r,
-                weights=weights,
-                epochs=epochs,
-                aggregate=True,
-            )
+            responses = dispatch_round(server, round_id=r, epochs=epochs)
             duration = time.time() - t_start
 
             successful = [res for res in responses if res.success]

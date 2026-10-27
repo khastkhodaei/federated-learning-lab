@@ -17,8 +17,8 @@ import torch
 from src.baselines import create_server_strategy
 from src.config import UnifiedConfig, load_unified_config
 from src.models.cnn import SimpleCNN
+from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
-from src.transport.federated_pb2 import TrainResponse
 from src.utils.evaluation import (
     compute_fairness_metrics,
     evaluate_model,
@@ -135,18 +135,6 @@ def resolve_server_settings(args: Any, u_cfg: UnifiedConfig) -> ServerSettings:
         baseline=str(baseline),
         report_dir=str(report_dir),
         round_timeout=float(round_timeout),
-    )
-
-
-def dispatch_round(
-    server: FederatedServer, settings: ServerSettings, round_id: int
-) -> list[TrainResponse]:
-    """Dispatches a training round to all registered clients and aggregates responses."""
-    return server.trigger_round(
-        round_id=round_id,
-        epochs=settings.epochs,
-        timeout=settings.round_timeout,
-        aggregate=True,
     )
 
 
@@ -335,7 +323,12 @@ def main() -> None:
             )
 
             start_time = time.time()
-            responses = dispatch_round(server, settings, round_id=r)
+            responses = dispatch_round(
+                server,
+                round_id=r,
+                epochs=settings.epochs,
+                timeout=settings.round_timeout,
+            )
             elapsed = time.time() - start_time
 
             successful = [res for res in responses if res.success]

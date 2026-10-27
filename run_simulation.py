@@ -27,6 +27,7 @@ from src.baselines import create_server_strategy
 from src.client import create_client_node
 from src.datasets.transforms import get_default_transform
 from src.models.cnn import SimpleCNN
+from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
 from src.utils.config import load_unified_config
 from src.utils.evaluation import (
@@ -224,7 +225,7 @@ def run_federated_simulation(
         round_history = []
         for r in range(1, eff_rounds + 1):
             t_start = time.time()
-            responses = server.trigger_round(round_id=r, epochs=eff_epochs, aggregate=True)
+            responses = dispatch_round(server, round_id=r, epochs=eff_epochs)
             elapsed = time.time() - t_start
 
             successful = [res for res in responses if res.success]

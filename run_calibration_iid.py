@@ -17,12 +17,18 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from fl_data_generator import FederatedDataset
+
 from src.client import create_client_node
 from src.datasets.transforms import get_default_transform
 from src.models.cnn import SimpleCNN
+from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
 from src.utils.config import load_unified_config
-from src.utils.evaluation import evaluate_model, get_global_test_loader, parse_client_metrics
+from src.utils.evaluation import (
+    evaluate_model,
+    get_global_test_loader,
+    parse_client_metrics,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,13 +106,7 @@ def run_iid_calibration(
         # 6. Coordinate Rounds
         for r in range(1, rounds + 1):
             t0 = time.time()
-            weights = server.get_global_weights()
-            responses = server.trigger_round(
-                round_id=r,
-                weights=weights,
-                epochs=epochs,
-                aggregate=True,
-            )
+            responses = dispatch_round(server, round_id=r, epochs=epochs)
             elapsed = time.time() - t0
 
             # Collect local accuracies
