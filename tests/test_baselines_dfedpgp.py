@@ -7,13 +7,19 @@ from torch import nn
 
 from src.baselines.dfedpgp import (
     DEFAULT_HEAD_PREFIXES,
+    DFedPGPServerStrategy,
     ModelPartition,
     build_directed_mixing_matrix,
     partition_model,
     split_named_parameters,
 )
 from src.models.cnn import SimpleCNN
-from src.utils.serialization import model_to_vector, vector_to_model
+from src.utils.serialization import (
+    bytes_to_vector,
+    model_to_vector,
+    vector_to_bytes,
+    vector_to_model,
+)
 
 
 def test_partition_simple_cnn_isolates_backbone_and_head() -> None:
@@ -394,3 +400,301 @@ def test_build_directed_mixing_matrix_rejects_invalid_arguments(
             round_id=round_id,
             out_degree=out_degree,
         )
+
+
+class _TwoLayerNet(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.backbone = nn.Linear(2, 2, bias=False)
+        self.head = nn.Linear(2, 1, bias=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.backbone(x))
+
+
+def test_dfedpgp_server_strategy_partial_push_sum_and_head_privacy() -> None:
+    strategy = DFedPGPServerStrategy(out_degree=1, seed=42, time_varying=True)
+    global_model = _TwoLayerNet()
+    partition = partition_model(global_model)
+
+    backbones = torch.tensor(
+        [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+        ],
+        dtype=torch.float32,
+    )
+    heads = torch.tensor(
+        [
+            [10.0, 11.0, 12.0],
+            [20.0, 21.0, 22.0],
+            [30.0, 31.0, 32.0],
+        ],
+        dtype=torch.float32,
+    )
+    sample_counts = [10, 20, 30]
+    client_ids = ["client_0", "client_1", "client_2"]
+    full_vectors = [partition.merge_vectors(backbones[i], heads[i]) for i in range(3)]
+    client_updates = [
+        (vector_to_bytes(full_vectors[i]), sample_counts[i]) for i in range(3)
+    ]
+
+    global_bytes = strategy.aggregate(
+        global_model=global_model,
+        client_updates=client_updates,
+        round_id=1,
+        client_ids=client_ids,
+    )
+
+    expected_p = build_directed_mixing_matrix(
+        num_clients=3,
+        round_id=1,
+        out_degree=1,
+        seed=42,
+        time_varying=True,
+    )
+    expected_mu = expected_p @ torch.ones(3, dtype=torch.float32)
+    expected_z = (expected_p @ backbones) / expected_mu.unsqueeze(1)
+
+    assert strategy.mixing_matrix is not None
+    assert torch.equal(strategy.mixing_matrix, expected_p)
+    assert strategy.push_sum_weights is not None
+    assert torch.allclose(strategy.push_sum_weights, expected_mu, atol=1e-6)
+    assert torch.isclose(strategy.push_sum_weights.sum(), torch.tensor(3.0), atol=1e-6)
+
+    for i, cid in enumerate(client_ids):
+        pers_vec = bytes_to_vector(strategy.client_weights[cid])
+        pers_backbone, pers_head = partition.split_vector(pers_vec)
+        assert torch.allclose(pers_backbone, expected_z[i], atol=1e-6)
+        assert torch.equal(pers_head, heads[i])
+
+    expected_global = (
+        10.0 * full_vectors[0] + 20.0 * full_vectors[1] + 30.0 * full_vectors[2]
+    ) / 60.0
+    assert torch.allclose(bytes_to_vector(global_bytes), expected_global, atol=1e-6)
+    assert torch.allclose(model_to_vector(global_model), expected_global, atol=1e-6)
+
+
+def test_dfedpgp_multi_round_non_uniform_mu_and_consensus_fixed_point() -> None:
+    strategy = DFedPGPServerStrategy(out_degree=2, seed=42, time_varying=True)
+    global_model = _TwoLayerNet()
+    partition = partition_model(global_model)
+    client_ids = ["client_0", "client_1", "client_2", "client_3"]
+
+    heads = [
+        torch.tensor([10.0 + i, 20.0 + i, 30.0 + i], dtype=torch.float32)
+        for i in range(4)
+    ]
+    expected_mu = torch.ones(4, dtype=torch.float32)
+
+    for round_id in (1, 2, 3):
+        updates = [
+            (
+                vector_to_bytes(
+                    partition.merge_vectors(
+                        torch.full((4,), float(round_id * 10 + i), dtype=torch.float32),
+                        heads[i],
+                    )
+                ),
+                10,
+            )
+            for i in range(4)
+        ]
+        strategy.aggregate(
+            global_model=global_model,
+            client_updates=updates,
+            round_id=round_id,
+            client_ids=client_ids,
+        )
+        p_round = build_directed_mixing_matrix(
+            num_clients=4,
+            round_id=round_id,
+            out_degree=2,
+            seed=42,
+            time_varying=True,
+        )
+        expected_mu = p_round @ expected_mu
+
+    assert strategy.push_sum_weights is not None
+    assert torch.allclose(strategy.push_sum_weights, expected_mu, atol=1e-6)
+    assert not torch.allclose(strategy.push_sum_weights, torch.ones(4), atol=1e-4)
+    assert torch.isclose(strategy.push_sum_weights.sum(), torch.tensor(4.0), atol=1e-5)
+
+    consensus_backbone = torch.tensor([3.5, -1.25, 0.75, 4.0], dtype=torch.float32)
+    consensus_updates = [
+        (
+            vector_to_bytes(partition.merge_vectors(consensus_backbone, heads[i])),
+            10,
+        )
+        for i in range(4)
+    ]
+    strategy.aggregate(
+        global_model=global_model,
+        client_updates=consensus_updates,
+        round_id=4,
+        client_ids=client_ids,
+    )
+
+    assert strategy.push_sum_weights is not None
+    assert torch.isclose(strategy.push_sum_weights.sum(), torch.tensor(4.0), atol=1e-5)
+    for i, cid in enumerate(client_ids):
+        pers_vec = bytes_to_vector(strategy.client_weights[cid])
+        pers_backbone, pers_head = partition.split_vector(pers_vec)
+        assert torch.allclose(pers_backbone, consensus_backbone, atol=1e-5)
+        assert torch.equal(pers_head, heads[i])
+
+
+def test_dfedpgp_client_arrival_order_permutation_invariance() -> None:
+    model_a = _TwoLayerNet()
+    model_b = _TwoLayerNet()
+    partition = partition_model(model_a)
+
+    client_ids = ["client_0", "client_1", "client_2", "client_3"]
+    updates_ordered = [
+        (
+            vector_to_bytes(
+                partition.merge_vectors(
+                    torch.full((4,), float(i + 1), dtype=torch.float32),
+                    torch.full((3,), float((i + 1) * 10), dtype=torch.float32),
+                )
+            ),
+            (i + 1) * 5,
+        )
+        for i in range(4)
+    ]
+
+    strat_a = DFedPGPServerStrategy(out_degree=2, seed=42, time_varying=True)
+    strat_b = DFedPGPServerStrategy(out_degree=2, seed=42, time_varying=True)
+
+    global_a_r1 = strat_a.aggregate(
+        global_model=model_a,
+        client_updates=updates_ordered,
+        round_id=1,
+        client_ids=client_ids,
+    )
+    perm_r1 = [3, 1, 0, 2]
+    global_b_r1 = strat_b.aggregate(
+        global_model=model_b,
+        client_updates=[updates_ordered[idx] for idx in perm_r1],
+        round_id=1,
+        client_ids=[client_ids[idx] for idx in perm_r1],
+    )
+
+    assert strat_a.client_ids == client_ids
+    assert strat_b.client_ids == client_ids
+    assert strat_a.mixing_matrix is not None and strat_b.mixing_matrix is not None
+    assert torch.equal(strat_a.mixing_matrix, strat_b.mixing_matrix)
+    assert strat_a.push_sum_weights is not None and strat_b.push_sum_weights is not None
+    assert torch.equal(strat_a.push_sum_weights, strat_b.push_sum_weights)
+    assert strat_a.client_weights == strat_b.client_weights
+    assert global_a_r1 == global_b_r1
+
+    perm_r2 = [2, 0, 3, 1]
+    global_a_r2 = strat_a.aggregate(
+        global_model=model_a,
+        client_updates=updates_ordered,
+        round_id=2,
+        client_ids=client_ids,
+    )
+    global_b_r2 = strat_b.aggregate(
+        global_model=model_b,
+        client_updates=[updates_ordered[idx] for idx in perm_r2],
+        round_id=2,
+        client_ids=[client_ids[idx] for idx in perm_r2],
+    )
+
+    assert strat_a.client_ids == strat_b.client_ids
+    assert torch.equal(strat_a.push_sum_weights, strat_b.push_sum_weights)
+    assert strat_a.client_weights == strat_b.client_weights
+    assert global_a_r2 == global_b_r2
+
+
+def test_dfedpgp_server_strategy_global_model_none_full_vector_push_sum() -> None:
+    strategy = DFedPGPServerStrategy(out_degree=1, seed=42, time_varying=True)
+    vectors = torch.tensor(
+        [
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            [6.0, 7.0, 8.0, 9.0, 10.0],
+            [11.0, 12.0, 13.0, 14.0, 15.0],
+        ],
+        dtype=torch.float32,
+    )
+    sample_counts = [10, 20, 30]
+    updates = [(vector_to_bytes(vectors[i]), sample_counts[i]) for i in range(3)]
+
+    global_bytes = strategy.aggregate(
+        global_model=None,
+        client_updates=updates,
+        round_id=1,
+    )
+
+    expected_p = build_directed_mixing_matrix(
+        num_clients=3,
+        round_id=1,
+        out_degree=1,
+        seed=42,
+        time_varying=True,
+    )
+    expected_mu = expected_p @ torch.ones(3, dtype=torch.float32)
+    expected_z = (expected_p @ vectors) / expected_mu.unsqueeze(1)
+
+    assert strategy.client_ids == ["client_0", "client_1", "client_2"]
+    for i, cid in enumerate(strategy.client_ids):
+        assert torch.allclose(bytes_to_vector(strategy.client_weights[cid]), expected_z[i], atol=1e-6)
+
+    expected_global = (10.0 * vectors[0] + 20.0 * vectors[1] + 30.0 * vectors[2]) / 60.0
+    assert torch.allclose(bytes_to_vector(global_bytes), expected_global, atol=1e-6)
+
+
+def test_dfedpgp_server_strategy_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="out_degree"):
+        DFedPGPServerStrategy(out_degree=-1)
+
+    strategy = DFedPGPServerStrategy()
+    with pytest.raises(ValueError, match="empty"):
+        strategy.aggregate(global_model=None, client_updates=[], round_id=1)
+
+    dummy = vector_to_bytes(torch.zeros(4, dtype=torch.float32))
+    with pytest.raises(ValueError, match="client_ids"):
+        strategy.aggregate(
+            global_model=None,
+            client_updates=[(dummy, 5), (dummy, 5)],
+            round_id=1,
+            client_ids=["client_0"],
+        )
+
+
+def test_dfedpgp_cohort_change_resets_push_sum_weights_and_uses_custom_prefixes() -> None:
+    class _CustomHeadNet(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stem = nn.Linear(2, 2, bias=False)
+            self.custom_head = nn.Linear(2, 1, bias=False)
+
+    model = _CustomHeadNet()
+    strategy = DFedPGPServerStrategy(out_degree=2, seed=42, head_prefixes=("custom_head",))
+    partition = partition_model(model, head_prefixes=("custom_head",))
+    assert partition.head_names == ("custom_head.weight",)
+
+    cohort_a = ["c0", "c1", "c2", "c3"]
+    updates_a = [
+        (vector_to_bytes(torch.full((6,), float(i + 1), dtype=torch.float32)), 10)
+        for i in range(4)
+    ]
+    strategy.aggregate(global_model=model, client_updates=updates_a, round_id=1, client_ids=cohort_a)
+    assert strategy.push_sum_weights is not None
+    assert not torch.allclose(strategy.push_sum_weights, torch.ones(4))
+
+    cohort_b = ["c0", "c1", "c2"]
+    updates_b = [
+        (vector_to_bytes(torch.full((6,), float(i + 10), dtype=torch.float32)), 10)
+        for i in range(3)
+    ]
+    strategy.aggregate(global_model=model, client_updates=updates_b, round_id=2, client_ids=cohort_b)
+    expected_p = build_directed_mixing_matrix(num_clients=3, round_id=2, out_degree=2, seed=42)
+    assert strategy.push_sum_weights is not None
+    assert torch.allclose(strategy.push_sum_weights, expected_p @ torch.ones(3), atol=1e-6)
+    for i, cid in enumerate(cohort_b):
+        _, head_vec = partition.split_vector(bytes_to_vector(strategy.client_weights[cid]))
+        assert torch.equal(head_vec, torch.full((2,), float(i + 10), dtype=torch.float32))
