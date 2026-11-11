@@ -4,18 +4,24 @@ from collections import deque
 import pytest
 import torch
 from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 from src.baselines.dfedpgp import (
     DEFAULT_HEAD_PREFIXES,
+    DFedPGPClientTrainer,
     DFedPGPServerStrategy,
+    DFedPGPTrainer,
     ModelPartition,
     build_directed_mixing_matrix,
     partition_model,
     split_named_parameters,
 )
+from src.client.node import Node
 from src.models.cnn import SimpleCNN
+from src.transport.federated_pb2 import TrainRequest
 from src.utils.serialization import (
     bytes_to_vector,
+    model_to_bytes,
     model_to_vector,
     vector_to_bytes,
     vector_to_model,
@@ -698,3 +704,320 @@ def test_dfedpgp_cohort_change_resets_push_sum_weights_and_uses_custom_prefixes(
     for i, cid in enumerate(cohort_b):
         _, head_vec = partition.split_vector(bytes_to_vector(strategy.client_weights[cid]))
         assert torch.equal(head_vec, torch.full((2,), float(i + 10), dtype=torch.float32))
+
+
+class _TinyClassifierNet(nn.Module):
+    def __init__(self, seed: int = 0) -> None:
+        super().__init__()
+        torch.manual_seed(seed)
+        self.backbone = nn.Linear(4, 3, bias=True)
+        self.head = nn.Linear(3, 2, bias=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(torch.relu(self.backbone(x)))
+
+
+def _make_tiny_loader(seed: int = 0, num_samples: int = 8) -> DataLoader:
+    generator = torch.Generator().manual_seed(seed)
+    inputs = torch.randn(num_samples, 4, generator=generator)
+    targets = torch.randint(0, 2, (num_samples,), generator=generator)
+    return DataLoader(TensorDataset(inputs, targets), batch_size=4, shuffle=False)
+
+
+def test_dfedpgp_trainer_alternating_training_and_private_head_persistence() -> None:
+    assert DFedPGPTrainer is DFedPGPClientTrainer
+
+    model = _TinyClassifierNet(seed=1)
+    partition = partition_model(model)
+    loader = _make_tiny_loader(seed=1, num_samples=8)
+    criterion = nn.CrossEntropyLoss()
+    trainer = DFedPGPClientTrainer()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
+
+    initial_vector = model_to_vector(model)
+    updated_bytes, total_samples, metrics = trainer.train(
+        model=model,
+        dataloader=loader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=torch.device("cpu"),
+    )
+
+    updated_vec = bytes_to_vector(updated_bytes)
+    assert not torch.equal(updated_vec, initial_vector)
+    assert total_samples == 8
+    assert {"loss", "head_loss", "backbone_loss"}.issubset(metrics.keys())
+    assert trainer.private_head_vector is not None
+    assert trainer.personalized_model is not None
+
+    round1_head = trainer.private_head_vector.clone()
+    _, model_head_r1 = partition.split_vector(model_to_vector(model))
+    assert torch.equal(round1_head, model_head_r1)
+
+    # Simulate round 2 where Node overwrote model with incoming payload containing a poisoned head.
+    incoming_backbone = torch.full((partition.backbone_dim,), 0.25, dtype=torch.float32)
+    poisoned_head = torch.full((partition.head_dim,), 999.0, dtype=torch.float32)
+    incoming_payload = partition.merge_vectors(incoming_backbone, poisoned_head)
+    vector_to_model(incoming_payload, model)
+    incoming_bytes = vector_to_bytes(incoming_payload)
+
+    updated_r2_bytes, samples_r2, _ = trainer.train(
+        model=model,
+        dataloader=loader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.05),
+        device=torch.device("cpu"),
+        global_weights=incoming_bytes,
+        head_epochs=0,
+        backbone_epochs=1,
+    )
+
+    assert samples_r2 == 8
+    r2_backbone, r2_head = partition.split_vector(bytes_to_vector(updated_r2_bytes))
+    assert torch.equal(r2_head, round1_head)
+    assert torch.equal(trainer.private_head_vector, round1_head)
+    assert not torch.equal(r2_backbone, incoming_backbone)
+    assert torch.all((r2_backbone - incoming_backbone).abs() < 0.5)
+
+
+def test_dfedpgp_trainer_phase_isolation_and_requires_grad_restoration() -> None:
+    criterion = nn.CrossEntropyLoss()
+    loader = _make_tiny_loader(seed=3, num_samples=8)
+
+    # Head-only phase: shared_backbone must stay bit-exact, personal_head updates.
+    model_head_only = _TinyClassifierNet(seed=5)
+    part_head = partition_model(model_head_only)
+    init_backbone_h, init_head_h = part_head.split_vector(model_to_vector(model_head_only))
+    trainer_head_only = DFedPGPClientTrainer(head_epochs=1, backbone_epochs=0)
+
+    out_h_bytes, samples_h, metrics_h = trainer_head_only.train(
+        model=model_head_only,
+        dataloader=loader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=torch.optim.SGD(model_head_only.parameters(), lr=0.05),
+        device=torch.device("cpu"),
+    )
+    out_backbone_h, out_head_h = part_head.split_vector(bytes_to_vector(out_h_bytes))
+    assert samples_h == 0
+    assert metrics_h["loss"] == metrics_h["head_loss"]
+    assert metrics_h["backbone_loss"] == 0.0
+    assert torch.equal(out_backbone_h, init_backbone_h)
+    assert not torch.equal(out_head_h, init_head_h)
+    assert all(param.requires_grad for param in model_head_only.parameters())
+
+    # Backbone-only phase: personal_head must stay bit-exact, shared_backbone updates.
+    model_backbone_only = _TinyClassifierNet(seed=5)
+    part_backbone = partition_model(model_backbone_only)
+    init_backbone_b, init_head_b = part_backbone.split_vector(model_to_vector(model_backbone_only))
+    trainer_backbone_only = DFedPGPClientTrainer(head_epochs=0, backbone_epochs=1)
+
+    out_b_bytes, samples_b, metrics_b = trainer_backbone_only.train(
+        model=model_backbone_only,
+        dataloader=loader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=torch.optim.SGD(model_backbone_only.parameters(), lr=0.05),
+        device=torch.device("cpu"),
+    )
+    out_backbone_b, out_head_b = part_backbone.split_vector(bytes_to_vector(out_b_bytes))
+    assert samples_b == 8
+    assert metrics_b["loss"] == metrics_b["backbone_loss"]
+    assert metrics_b["head_loss"] == 0.0
+    assert not torch.equal(out_backbone_b, init_backbone_b)
+    assert torch.equal(out_head_b, init_head_b)
+    assert all(param.requires_grad for param in model_backbone_only.parameters())
+
+    # Exception safety & initially frozen parameter restoration + lr_head override precedence.
+    model_exc = _TinyClassifierNet(seed=7)
+    model_exc.backbone.bias.requires_grad = False
+    trainer_exc = DFedPGPClientTrainer()
+
+    class _FailingCriterion(nn.Module):
+        def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        trainer_exc.train(
+            model=model_exc,
+            dataloader=loader,
+            epochs=1,
+            criterion=_FailingCriterion(),
+            optimizer=torch.optim.SGD(model_exc.parameters(), lr=0.0),
+            device=torch.device("cpu"),
+        )
+    assert model_exc.backbone.bias.requires_grad is False
+    assert model_exc.backbone.weight.requires_grad is True
+    assert all(param.requires_grad for param in model_exc.head.parameters())
+
+    model_lr_override = _TinyClassifierNet(seed=8)
+    part_lr = partition_model(model_lr_override)
+    init_b_lr, init_h_lr = part_lr.split_vector(model_to_vector(model_lr_override))
+    out_lr_bytes, _, _ = DFedPGPClientTrainer().train(
+        model=model_lr_override,
+        dataloader=loader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=torch.optim.SGD(model_lr_override.parameters(), lr=0.0),
+        device=torch.device("cpu"),
+        lr_head=0.1,
+        lr_backbone=0.2,
+    )
+    out_b_lr, out_h_lr = part_lr.split_vector(bytes_to_vector(out_lr_bytes))
+    assert not torch.equal(out_b_lr, init_b_lr)
+    assert not torch.equal(out_h_lr, init_h_lr)
+
+
+def test_dfedpgp_trainer_node_on_train_round_and_evaluate_local_seam() -> None:
+    train_loader = _make_tiny_loader(seed=11, num_samples=12)
+    test_loader = _make_tiny_loader(seed=12, num_samples=12)
+    model = _TinyClassifierNet(seed=11)
+    initial_bytes = model_to_bytes(model)
+
+    trainer = DFedPGPClientTrainer()
+    node = Node(
+        node_id="dfedpgp_client_0",
+        data=train_loader,
+        test_data=test_loader,
+        model=model,
+        lr=0.05,
+        trainer=trainer,
+    )
+
+    response = node.on_train_round(
+        TrainRequest(round_id=1, weights=initial_bytes, epochs=1)
+    )
+
+    assert response.success is True
+    assert response.num_samples == 12
+    assert "test_acc=" in response.message
+
+    eval_before = node.evaluate_local()
+    with torch.no_grad():
+        for param in node.model.parameters():
+            param.zero_()
+    eval_after = node.evaluate_local()
+
+    assert eval_after["accuracy"] == eval_before["accuracy"]
+    assert eval_after["loss"] == eval_before["loss"]
+
+
+def test_dfedpgp_trainer_determinism_across_rounds() -> None:
+    criterion = nn.CrossEntropyLoss()
+    loader_a = _make_tiny_loader(seed=21, num_samples=8)
+    loader_b = _make_tiny_loader(seed=21, num_samples=8)
+
+    model_a = _TinyClassifierNet(seed=21)
+    model_b = _TinyClassifierNet(seed=21)
+    trainer_a = DFedPGPClientTrainer(lr_backbone=0.04, lr_head=0.08)
+    trainer_b = DFedPGPClientTrainer(lr_backbone=0.04, lr_head=0.08)
+
+    for round_id in (1, 2):
+        payload_a = model_to_bytes(model_a)
+        payload_b = model_to_bytes(model_b)
+        out_a, samples_a, metrics_a = trainer_a.train(
+            model=model_a,
+            dataloader=loader_a,
+            epochs=1,
+            criterion=criterion,
+            optimizer=torch.optim.SGD(model_a.parameters(), lr=0.01, momentum=0.9),
+            device=torch.device("cpu"),
+            global_weights=payload_a if round_id > 1 else None,
+        )
+        out_b, samples_b, metrics_b = trainer_b.train(
+            model=model_b,
+            dataloader=loader_b,
+            epochs=1,
+            criterion=criterion,
+            optimizer=torch.optim.SGD(model_b.parameters(), lr=0.01, momentum=0.9),
+            device=torch.device("cpu"),
+            global_weights=payload_b if round_id > 1 else None,
+        )
+        assert out_a == out_b
+        assert samples_a == samples_b
+        assert metrics_a == metrics_b
+        assert trainer_a.private_head_vector is not None
+        assert trainer_b.private_head_vector is not None
+        assert torch.equal(trainer_a.private_head_vector, trainer_b.private_head_vector)
+
+
+@pytest.mark.parametrize(
+    ("lr_backbone", "lr_head", "head_epochs", "backbone_epochs"),
+    [
+        (0.0, None, None, None),
+        (-0.1, None, None, None),
+        (None, 0.0, None, None),
+        (None, -0.05, None, None),
+        (None, None, -1, None),
+        (None, None, None, -1),
+    ],
+)
+def test_dfedpgp_trainer_init_rejects_invalid_hyperparams(
+    lr_backbone: float | None,
+    lr_head: float | None,
+    head_epochs: int | None,
+    backbone_epochs: int | None,
+) -> None:
+    with pytest.raises(ValueError):
+        DFedPGPClientTrainer(
+            lr_backbone=lr_backbone,
+            lr_head=lr_head,
+            head_epochs=head_epochs,
+            backbone_epochs=backbone_epochs,
+        )
+
+
+def test_dfedpgp_trainer_train_rejects_invalid_overrides_and_head_dim_mismatch() -> None:
+    model = _TinyClassifierNet(seed=1)
+    loader = _make_tiny_loader(seed=1, num_samples=8)
+    criterion = nn.CrossEntropyLoss()
+    trainer = DFedPGPClientTrainer()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
+
+    for bad_kwargs in (
+        {"lr_backbone": 0.0},
+        {"lr_head": -0.1},
+        {"head_epochs": -1},
+        {"backbone_epochs": -2},
+    ):
+        with pytest.raises(ValueError):
+            trainer.train(
+                model=model,
+                dataloader=loader,
+                epochs=1,
+                criterion=criterion,
+                optimizer=optimizer,
+                device=torch.device("cpu"),
+                **bad_kwargs,
+            )
+
+    trainer.train(
+        model=model,
+        dataloader=loader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=torch.device("cpu"),
+    )
+
+    class _WiderHeadNet(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.backbone = nn.Linear(4, 3, bias=True)
+            self.head = nn.Linear(3, 5, bias=True)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.head(torch.relu(self.backbone(x)))
+
+    mismatched_model = _WiderHeadNet()
+    with pytest.raises(ValueError, match="head_dim"):
+        trainer.train(
+            model=mismatched_model,
+            dataloader=loader,
+            epochs=1,
+            criterion=criterion,
+            optimizer=torch.optim.SGD(mismatched_model.parameters(), lr=0.05),
+            device=torch.device("cpu"),
+        )
