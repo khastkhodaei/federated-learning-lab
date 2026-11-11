@@ -1,3 +1,6 @@
+import random
+from collections import deque
+
 import pytest
 import torch
 from torch import nn
@@ -5,6 +8,7 @@ from torch import nn
 from src.baselines.dfedpgp import (
     DEFAULT_HEAD_PREFIXES,
     ModelPartition,
+    build_directed_mixing_matrix,
     partition_model,
     split_named_parameters,
 )
@@ -212,3 +216,181 @@ def test_partition_matches_exact_parameter_name_and_custom_prefix() -> None:
         torch.tensor([True, True, False, False, False, False, False, False, False]),
     )
 
+
+@pytest.mark.parametrize("num_clients", [1, 2, 3, 5])
+@pytest.mark.parametrize("out_degree", [0, 1, 2])
+def test_build_directed_mixing_matrix_column_stochastic_and_self_loops(
+    num_clients: int,
+    out_degree: int,
+) -> None:
+    matrix = build_directed_mixing_matrix(
+        num_clients=num_clients,
+        round_id=1,
+        out_degree=out_degree,
+        seed=42,
+    )
+
+    assert matrix.shape == (num_clients, num_clients)
+    assert matrix.dtype == torch.float32
+    assert matrix.device.type == "cpu"
+    assert torch.all(matrix >= 0.0)
+    assert torch.all(torch.diag(matrix) > 0.0)
+    assert torch.allclose(matrix.sum(dim=0), torch.ones(num_clients, dtype=torch.float32), atol=1e-6)
+
+
+def _is_strongly_connected(support: torch.Tensor) -> bool:
+    num_nodes = support.shape[0]
+    for start in range(num_nodes):
+        visited = {start}
+        queue: deque[int] = deque([start])
+        while queue:
+            src = queue.popleft()
+            for dst in range(num_nodes):
+                if bool(support[dst, src].item()) and dst not in visited:
+                    visited.add(dst)
+                    queue.append(dst)
+        if len(visited) != num_nodes:
+            return False
+    return True
+
+
+@pytest.mark.parametrize("num_clients", [3, 4, 6])
+def test_build_directed_mixing_matrix_asymmetric_and_strongly_connected(num_clients: int) -> None:
+    matrix = build_directed_mixing_matrix(
+        num_clients=num_clients,
+        round_id=1,
+        out_degree=1,
+        seed=42,
+    )
+
+    assert not torch.allclose(matrix, matrix.T)
+    for col in range(num_clients):
+        nonzero = matrix[matrix[:, col] > 0.0, col]
+        assert nonzero.numel() == 2
+        assert torch.allclose(nonzero, torch.full((2,), 0.5, dtype=torch.float32))
+    assert _is_strongly_connected(matrix > 0.0)
+
+
+def test_build_directed_mixing_matrix_multi_neighbor_weights_and_connectivity() -> None:
+    matrix = build_directed_mixing_matrix(
+        num_clients=5,
+        round_id=1,
+        out_degree=2,
+        seed=7,
+    )
+
+    expected_weight = 1.0 / 3.0
+    for col in range(5):
+        nonzero = matrix[matrix[:, col] > 0.0, col]
+        assert nonzero.numel() == 3
+        assert torch.allclose(nonzero, torch.full((3,), expected_weight, dtype=torch.float32))
+    assert _is_strongly_connected(matrix > 0.0)
+
+
+def test_build_directed_mixing_matrix_deterministic_and_isolated_rng() -> None:
+    random_state_before = random.getstate()
+    torch_state_before = torch.get_rng_state()
+
+    m1 = build_directed_mixing_matrix(
+        num_clients=5,
+        round_id=3,
+        out_degree=2,
+        seed=42,
+        time_varying=True,
+    )
+
+    assert random.getstate() == random_state_before
+    assert torch.equal(torch.get_rng_state(), torch_state_before)
+
+    m2 = build_directed_mixing_matrix(
+        num_clients=5,
+        round_id=3,
+        out_degree=2,
+        seed=42,
+        time_varying=True,
+    )
+    assert torch.equal(m1, m2)
+
+    m_other_seed = build_directed_mixing_matrix(
+        num_clients=5,
+        round_id=3,
+        out_degree=2,
+        seed=99,
+        time_varying=True,
+    )
+    assert not torch.equal(m1, m_other_seed)
+
+
+def test_build_directed_mixing_matrix_time_varying_vs_static_rounds() -> None:
+    tv_r1 = build_directed_mixing_matrix(
+        num_clients=6,
+        round_id=1,
+        out_degree=1,
+        seed=42,
+        time_varying=True,
+    )
+    tv_r2 = build_directed_mixing_matrix(
+        num_clients=6,
+        round_id=2,
+        out_degree=1,
+        seed=42,
+        time_varying=True,
+    )
+    assert not torch.equal(tv_r1, tv_r2)
+
+    static_r1 = build_directed_mixing_matrix(
+        num_clients=6,
+        round_id=1,
+        out_degree=1,
+        seed=42,
+        time_varying=False,
+    )
+    static_r2 = build_directed_mixing_matrix(
+        num_clients=6,
+        round_id=2,
+        out_degree=1,
+        seed=42,
+        time_varying=False,
+    )
+    assert torch.equal(static_r1, static_r2)
+
+
+def test_build_directed_mixing_matrix_edge_cases() -> None:
+    assert torch.equal(
+        build_directed_mixing_matrix(num_clients=1, round_id=0, out_degree=3),
+        torch.ones((1, 1), dtype=torch.float32),
+    )
+    assert torch.equal(
+        build_directed_mixing_matrix(num_clients=4, round_id=1, out_degree=0),
+        torch.eye(4, dtype=torch.float32),
+    )
+    assert torch.equal(
+        build_directed_mixing_matrix(num_clients=4, round_id=1, out_degree=4),
+        torch.full((4, 4), 0.25, dtype=torch.float32),
+    )
+    assert torch.equal(
+        build_directed_mixing_matrix(num_clients=4, round_id=1, out_degree=10),
+        torch.full((4, 4), 0.25, dtype=torch.float32),
+    )
+
+
+@pytest.mark.parametrize(
+    ("num_clients", "round_id", "out_degree"),
+    [
+        (0, 1, 1),
+        (-2, 1, 1),
+        (3, -1, 1),
+        (3, 1, -1),
+    ],
+)
+def test_build_directed_mixing_matrix_rejects_invalid_arguments(
+    num_clients: int,
+    round_id: int,
+    out_degree: int,
+) -> None:
+    with pytest.raises(ValueError):
+        build_directed_mixing_matrix(
+            num_clients=num_clients,
+            round_id=round_id,
+            out_degree=out_degree,
+        )
