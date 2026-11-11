@@ -30,7 +30,7 @@ def test_run_federated_simulation_synthetic(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "algo",
-    ["fedprox", "ditto", "perfedavg", "pfedgraph"],
+    ["fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"],
 )
 def test_run_simulation_baselines_synthetic(algo: str, tmp_path: Path) -> None:
     results = run_federated_simulation(

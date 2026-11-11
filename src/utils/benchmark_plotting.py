@@ -1,7 +1,7 @@
 """Benchmark comparison plotting utilities for Federated Learning Lab.
 
 Reads structured metrics.json across all evaluated baselines (FedAvg, FedProx, Ditto,
-Per-FedAvg, pFedGraph) and produces publication-quality multi-algorithm comparison charts:
+Per-FedAvg, pFedGraph, DFedPGP) and produces publication-quality multi-algorithm comparison charts:
 1. Global Accuracy Comparison (Global test accuracy vs. Round)
 2. Personalized / Local Accuracy Comparison (Mean local accuracy vs. Round)
 3. Combined Benchmark Overview Figure
@@ -51,6 +51,12 @@ ALGORITHM_STYLES = {
         "linestyle": "-",
         "label": "pFedGraph (Graph W)",
     },
+    "dfedpgp": {
+        "color": "#17becf",  # Teal Cyan
+        "marker": "P",
+        "linestyle": "-",
+        "label": "DFedPGP (Directed Push)",
+    },
 }
 
 DEFAULT_STYLE = {
@@ -69,12 +75,19 @@ def load_benchmark_metrics(
 
     Args:
         reports_dir: Root directory containing algorithm subdirectories.
-        algorithms: List of algorithm names to load (default: all 5 baselines).
+        algorithms: List of algorithm names to load (default: all 6 baselines).
 
     Returns:
         Dict mapping algorithm name to parsed metrics dictionary.
     """
-    target_algos = algorithms or ["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph"]
+    target_algos = algorithms or [
+        "fedavg",
+        "fedprox",
+        "ditto",
+        "perfedavg",
+        "pfedgraph",
+        "dfedpgp",
+    ]
     base_dir = Path(reports_dir)
     results: dict[str, dict[str, Any]] = {}
 
@@ -298,7 +311,11 @@ def plot_benchmark_summary(
     ax_l.grid(True, linestyle="--", alpha=0.55)
     ax_l.legend(frameon=True, fontsize=8.5, loc="lower right")
 
-    plt.suptitle("FL Benchmark Comparison across 5 Baselines on CIFAR-10 (α = 0.1)", fontsize=13, fontweight="bold")
+    plt.suptitle(
+        f"FL Benchmark Comparison across {len(benchmark_data)} Baselines on CIFAR-10 (α = 0.1)",
+        fontsize=13,
+        fontweight="bold",
+    )
     plt.tight_layout()
     plt.savefig(combined_plot, bbox_inches="tight")
     plt.close(fig)

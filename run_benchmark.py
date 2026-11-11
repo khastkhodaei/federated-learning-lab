@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Automated Multi-Baseline Benchmark Orchestrator for Federated Learning Lab.
 
-Sequentially executes all 5 federated learning baselines under identical experimental conditions:
+Sequentially executes all 6 federated learning baselines under identical experimental conditions:
 - FedAvg (McMahan et al., 2017)
 - FedProx (Li et al., 2020) [mu=0.01]
 - Ditto (Li et al., 2021) [lambda=0.1, pers_epochs=1]
 - Per-FedAvg (Fallah et al., 2020) [alpha_lr=0.01, beta_lr=0.005]
 - pFedGraph (Chen et al., 2022) [graph_alpha=0.1, graph_lam=0.01]
+- DFedPGP (Directed Partial Gradient Push, out_degree=1, time_varying=True)
 
 Saves per-baseline metrics to reports/<algorithm>/metrics.json and generates combined
 cross-algorithm comparison plots in reports/benchmark_comparison/.
@@ -51,6 +52,10 @@ BENCHMARK_CONFIGS: dict[str, dict[str, Any]] = {
         "description": "pFedGraph (Graph Collaboration, alpha=0.1, lam=0.01)",
         "params": {"graph_alpha": 0.1, "graph_lam": 0.01},
     },
+    "dfedpgp": {
+        "description": "DFedPGP (Directed Partial Gradient Push, out_degree=1)",
+        "params": {"out_degree": 1, "time_varying": True},
+    },
 }
 
 
@@ -72,7 +77,7 @@ def run_full_benchmark(
         rounds: Number of federated training rounds per baseline.
         clients: Number of participating clients.
         epochs: Local training epochs per client.
-        algorithms: List of algorithm names to run (default: all 5).
+        algorithms: List of algorithm names to run (default: all 6).
         config_path: Unified YAML config path.
         reports_dir: Directory containing per-baseline reports.
         output_dir: Directory to save combined comparison plots.
@@ -247,7 +252,7 @@ def main() -> None:
         "--algorithms",
         "-a",
         nargs="+",
-        default=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph"],
+        default=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"],
         help="List of algorithms to benchmark",
     )
     parser.add_argument(

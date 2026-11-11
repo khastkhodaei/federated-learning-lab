@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Federated Learning Lab: Unified Multi-Client Simulation Orchestrator.
 
-Consolidates all baseline execution logic (FedAvg, FedProx, Ditto, Per-FedAvg, pFedGraph)
+Consolidates all baseline execution logic (FedAvg, FedProx, Ditto, Per-FedAvg, pFedGraph, DFedPGP)
 into a single modular orchestrator. Spawns the central coordinator server and N client nodes,
 coordinates synchronous rounds via gRPC, evaluates global and personalized models, and logs telemetry.
 """
@@ -62,6 +62,13 @@ def run_federated_simulation(
     # pFedGraph
     graph_alpha: float | None = None,
     graph_lam: float | None = None,
+    # DFedPGP
+    out_degree: int | None = None,
+    time_varying: bool | None = None,
+    lr_backbone: float | None = None,
+    lr_head: float | None = None,
+    head_epochs: int | None = None,
+    backbone_epochs: int | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Runs a complete federated training simulation across any supported baseline.
@@ -70,7 +77,7 @@ def run_federated_simulation(
         num_clients: Total number of participating clients.
         rounds: Number of federated training rounds.
         epochs: Local training epochs per client per round.
-        algorithm: Selected algorithm ('fedavg', 'fedprox', 'ditto', 'perfedavg', 'pfedgraph').
+        algorithm: Selected algorithm ('fedavg', 'fedprox', 'ditto', 'perfedavg', 'pfedgraph', 'dfedpgp').
         config_path: Path to unified YAML configuration file.
         reports_dir: Directory where baseline report artifacts will be saved.
         server_port: Port for coordinator gRPC server (0 for ephemeral OS port).
@@ -83,6 +90,12 @@ def run_federated_simulation(
         beta_lr: Per-FedAvg outer-loop meta-update learning rate.
         graph_alpha: pFedGraph graph learning rate / step size.
         graph_lam: pFedGraph graph sparsity / regularization parameter.
+        out_degree: DFedPGP peer out-degree per round.
+        time_varying: DFedPGP whether directed topology varies per round.
+        lr_backbone: DFedPGP shared_backbone learning rate override.
+        lr_head: DFedPGP personal_head learning rate override.
+        head_epochs: DFedPGP personal_head local epochs override.
+        backbone_epochs: DFedPGP shared_backbone local epochs override.
 
     Returns:
         Dictionary summarizing simulation results, metrics, and round history.
@@ -113,6 +126,8 @@ def run_federated_simulation(
         config=u_cfg,
         graph_alpha=graph_alpha,
         graph_lam=graph_lam,
+        out_degree=out_degree,
+        time_varying=time_varying,
     )
 
     # 2. Setup Central Coordinator Server
@@ -152,6 +167,15 @@ def run_federated_simulation(
         eff_graph_lam = graph_lam if graph_lam is not None else getattr(u_cfg.baselines.pfedgraph, "lam", 0.01)
         base_cfg.pfedgraph.alpha = float(eff_graph_alpha)
         base_cfg.pfedgraph.lam = float(eff_graph_lam)
+    elif eff_algo in ("dfedpgp",):
+        if lr_backbone is not None:
+            base_cfg.dfedpgp.lr_backbone = float(lr_backbone)
+        if lr_head is not None:
+            base_cfg.dfedpgp.lr_head = float(lr_head)
+        if head_epochs is not None:
+            base_cfg.dfedpgp.head_epochs = int(head_epochs)
+        if backbone_epochs is not None:
+            base_cfg.dfedpgp.backbone_epochs = int(backbone_epochs)
 
     # 4. Data Preparation
     fed_dataset = None
@@ -252,7 +276,11 @@ def run_federated_simulation(
                 )
                 global_acc = float(eval_metrics.get("accuracy", 0.0))
 
-            acc_label = "Personalized Local Acc" if eff_algo in ("ditto", "perfedavg", "pfedgraph") else "Local Acc"
+            acc_label = (
+                "Personalized Local Acc"
+                if eff_algo in ("ditto", "perfedavg", "pfedgraph", "dfedpgp")
+                else "Local Acc"
+            )
             logger.info(
                 "Round %d/%d completed in %.2fs: Global Acc: %.2f%% | Mean %s: %.2f%% | Client Accs: %s",
                 r,
@@ -354,6 +382,7 @@ run_fedprox_simulation = lambda **kw: run_federated_simulation(algorithm="fedpro
 run_ditto_simulation = lambda **kw: run_federated_simulation(algorithm="ditto", **kw)
 run_perfedavg_simulation = lambda **kw: run_federated_simulation(algorithm="perfedavg", **kw)
 run_pfedgraph_simulation = lambda **kw: run_federated_simulation(algorithm="pfedgraph", **kw)
+run_dfedpgp_simulation = lambda **kw: run_federated_simulation(algorithm="dfedpgp", **kw)
 
 
 def main() -> None:
@@ -367,7 +396,7 @@ def main() -> None:
         "-a",
         type=str,
         default=None,
-        choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph"],
+        choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"],
         help="Federated optimization algorithm baseline",
     )
     parser.add_argument(
@@ -472,6 +501,48 @@ def main() -> None:
         default=None,
         help="[pFedGraph] Graph sparsity / regularization parameter lambda (default: 0.01)",
     )
+    parser.add_argument(
+        "--out-degree",
+        dest="out_degree",
+        type=int,
+        default=None,
+        help="[DFedPGP] Directed peer out-degree per round (default: 1)",
+    )
+    parser.add_argument(
+        "--time-varying",
+        dest="time_varying",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="[DFedPGP] Whether directed mixing topology varies across rounds",
+    )
+    parser.add_argument(
+        "--lr-backbone",
+        dest="lr_backbone",
+        type=float,
+        default=None,
+        help="[DFedPGP] Learning rate override for shared_backbone updates",
+    )
+    parser.add_argument(
+        "--lr-head",
+        dest="lr_head",
+        type=float,
+        default=None,
+        help="[DFedPGP] Learning rate override for personal_head updates",
+    )
+    parser.add_argument(
+        "--head-epochs",
+        dest="head_epochs",
+        type=int,
+        default=None,
+        help="[DFedPGP] Local epochs override for personal_head updates",
+    )
+    parser.add_argument(
+        "--backbone-epochs",
+        dest="backbone_epochs",
+        type=int,
+        default=None,
+        help="[DFedPGP] Local epochs override for shared_backbone updates",
+    )
 
     args = parser.parse_args()
 
@@ -498,6 +569,12 @@ def main() -> None:
         beta_lr=args.beta_lr,
         graph_alpha=args.graph_alpha,
         graph_lam=args.graph_lam,
+        out_degree=args.out_degree,
+        time_varying=args.time_varying,
+        lr_backbone=args.lr_backbone,
+        lr_head=args.lr_head,
+        head_epochs=args.head_epochs,
+        backbone_epochs=args.backbone_epochs,
     )
 
 

@@ -28,6 +28,9 @@ from src.client.config import (
 )
 from src.client.node import Node
 from src.models.cnn import SimpleCNN
+from src.server.dispatch import dispatch_round
+from src.server.server import FederatedServer
+from src.transport.client import FederatedClient
 from src.transport.federated_pb2 import TrainRequest
 from src.utils.config import DFedPGPConfig, UnifiedConfig, load_unified_config
 from src.utils.serialization import (
@@ -1241,3 +1244,123 @@ def test_dfedpgp_client_config_yaml_loading_and_trainer_factory(tmp_path: Path) 
     assert default_trainer.lr_head is None
     assert default_trainer.head_epochs is None
     assert default_trainer.backbone_epochs is None
+
+
+def test_dfedpgp_end_to_end_synthetic_simulation(tmp_path: Path) -> None:
+    from run_simulation import run_dfedpgp_simulation, run_federated_simulation
+
+    assert callable(run_dfedpgp_simulation)
+    reports_dir = tmp_path / "reports"
+    results = run_federated_simulation(
+        algorithm="dfedpgp",
+        num_clients=3,
+        rounds=2,
+        epochs=1,
+        out_degree=1,
+        time_varying=True,
+        lr_backbone=0.02,
+        lr_head=0.05,
+        head_epochs=1,
+        backbone_epochs=1,
+        synthetic=True,
+        reports_dir=reports_dir,
+    )
+
+    assert results["algorithm"] == "dfedpgp"
+    assert results["rounds_completed"] == 2
+    assert results["num_clients"] == 3
+    assert results["final_model_weights"] is not None
+    assert len(results["final_model_weights"]) > 0
+
+    dfed_reports = reports_dir / "dfedpgp"
+    assert (dfed_reports / "metrics.json").is_file()
+    assert (dfed_reports / "loss_curve.png").is_file()
+    assert (dfed_reports / "accuracy_curves.png").is_file()
+    assert (dfed_reports / "client_dispersion.png").is_file()
+    assert (dfed_reports / "round_duration.png").is_file()
+
+
+def test_dfedpgp_live_multi_round_grpc_server_and_nodes() -> None:
+    initial_model = _TinyClassifierNet(seed=0)
+    partition = partition_model(initial_model)
+    init_backbone, _ = partition.split_vector(model_to_vector(initial_model))
+
+    strategy = DFedPGPServerStrategy(out_degree=1, seed=42)
+    server = FederatedServer(
+        host="127.0.0.1",
+        port=0,
+        model=initial_model,
+        strategy=strategy,
+    )
+    transports: list[FederatedClient] = []
+    nodes: list[Node] = []
+
+    try:
+        server.start()
+        server_addr = f"127.0.0.1:{server.bound_port}"
+
+        datasets = [
+            TensorDataset(torch.full((8, 4), 1.5), torch.zeros(8, dtype=torch.long)),
+            TensorDataset(torch.full((8, 4), -1.5), torch.ones(8, dtype=torch.long)),
+            TensorDataset(
+                torch.linspace(-2.0, 2.0, 32).view(8, 4),
+                torch.tensor([0, 1, 0, 1, 1, 0, 1, 0], dtype=torch.long),
+            ),
+        ]
+        trainers = [DFedPGPClientTrainer() for _ in range(3)]
+        for i in range(3):
+            transport = FederatedClient(target=server_addr)
+            transports.append(transport)
+            nodes.append(
+                Node(
+                    node_id=f"client_{i}",
+                    data=DataLoader(datasets[i], batch_size=4, shuffle=False),
+                    test_data=DataLoader(datasets[i], batch_size=4, shuffle=False),
+                    model=_TinyClassifierNet(seed=0),
+                    transport=transport,
+                    lr=0.05,
+                    port=0,
+                    trainer=trainers[i],
+                )
+            )
+
+        for node in nodes:
+            reg = node.register()
+            assert reg is not None and reg.success is True
+
+        for round_id in (1, 2):
+            responses = dispatch_round(server, round_id=round_id, epochs=1, timeout=10.0)
+            assert len(responses) == 3
+            assert all(res.success and res.num_samples == 8 for res in responses)
+
+        expected_cids = {"client_0", "client_1", "client_2"}
+        assert set(server.client_weights.keys()) == expected_cids
+        assert strategy.push_sum_weights is not None
+        assert torch.isclose(strategy.push_sum_weights.sum(), torch.tensor(3.0), atol=1e-5)
+
+        resolved_heads = [
+            trainer.private_head_vector
+            for trainer in trainers
+            if trainer.private_head_vector is not None
+        ]
+        assert len(resolved_heads) == 3
+        assert not torch.equal(resolved_heads[0], resolved_heads[1])
+        assert not torch.equal(resolved_heads[1], resolved_heads[2])
+        assert not torch.equal(resolved_heads[0], resolved_heads[2])
+
+        for i, node in enumerate(nodes):
+            cid = f"client_{i}"
+            pushed_backbone, pushed_head = partition.split_vector(
+                bytes_to_vector(server.client_weights[cid])
+            )
+            assert not torch.equal(pushed_backbone, init_backbone)
+            assert torch.equal(pushed_head, resolved_heads[i])
+
+            eval_res = node.evaluate_local()
+            assert eval_res["total"] == 8
+            assert 0.0 <= eval_res["accuracy"] <= 1.0
+    finally:
+        for node, transport in zip(nodes, transports, strict=True):
+            node.stop(grace=0)
+            transport.close()
+        server.stop(grace=0)
