@@ -11,6 +11,7 @@ from run_client import build_client_dataloaders
 from run_server import resolve_server_settings
 from run_simulation import run_federated_simulation
 from src.baselines import (
+    DFedPGPClientTrainer,
     DittoClientTrainer,
     FedAvgClientTrainer,
     FedProxClientTrainer,
@@ -117,6 +118,19 @@ def test_create_trainer_from_config() -> None:
     cfg_pfedgraph = ClientConfig(algorithm="pfedgraph")
     trainer_pfedgraph = create_trainer_from_config(cfg_pfedgraph)
     assert isinstance(trainer_pfedgraph, PFedGraphClientTrainer)
+
+    # DFedPGP
+    cfg_dfedpgp = ClientConfig(algorithm="dfedpgp")
+    cfg_dfedpgp.dfedpgp.lr_backbone = 0.02
+    cfg_dfedpgp.dfedpgp.lr_head = 0.05
+    cfg_dfedpgp.dfedpgp.head_epochs = 3
+    cfg_dfedpgp.dfedpgp.backbone_epochs = 2
+    trainer_dfedpgp = create_trainer_from_config(cfg_dfedpgp)
+    assert isinstance(trainer_dfedpgp, DFedPGPClientTrainer)
+    assert trainer_dfedpgp.lr_backbone == pytest.approx(0.02)
+    assert trainer_dfedpgp.lr_head == pytest.approx(0.05)
+    assert trainer_dfedpgp.head_epochs == 3
+    assert trainer_dfedpgp.backbone_epochs == 2
 
 
 def test_standalone_config_algorithm_and_baseline_parity(tmp_path: Path) -> None:

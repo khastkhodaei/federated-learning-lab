@@ -7,6 +7,7 @@ import pytest
 
 from run_server import ServerSettings, dispatch_round, resolve_server_settings
 from src.baselines import (
+    DFedPGPServerStrategy,
     DittoServerStrategy,
     FedAvgServerStrategy,
     FedProxServerStrategy,
@@ -18,6 +19,7 @@ from src.server.server import FederatedServer
 from src.transport.federated_pb2 import TrainResponse
 from src.utils.config import (
     BaselinesConfig,
+    DFedPGPConfig,
     PFedGraphConfig,
     UnifiedConfig,
     load_unified_config,
@@ -134,14 +136,16 @@ def test_resolve_server_settings_regression_real_unified_config() -> None:
         ("ditto", DittoServerStrategy),
         ("perfedavg", PerFedAvgServerStrategy),
         ("pfedgraph", PFedGraphServerStrategy),
+        ("dfedpgp", DFedPGPServerStrategy),
     ],
 )
 def test_strategy_factory_all_baselines(baseline_name: str, expected_cls: type) -> None:
-    """Strategy factory must instantiate the correct class and pFedGraph alpha/lam from config."""
+    """Strategy factory must instantiate the correct class and baseline hyperparameters from config."""
     u_cfg = UnifiedConfig(
         baseline=baseline_name,
         baselines=BaselinesConfig(
             pfedgraph=PFedGraphConfig(alpha=0.35, lam=0.07),
+            dfedpgp=DFedPGPConfig(out_degree=2, time_varying=False),
         ),
     )
 
@@ -163,6 +167,20 @@ def test_strategy_factory_all_baselines(baseline_name: str, expected_cls: type) 
         assert isinstance(override_strategy, PFedGraphServerStrategy)
         assert override_strategy.alpha == pytest.approx(0.5)
         assert override_strategy.lam == pytest.approx(0.02)
+    elif baseline_name == "dfedpgp":
+        assert isinstance(strategy, DFedPGPServerStrategy)
+        assert strategy.out_degree == 2
+        assert strategy.time_varying is False
+
+        override_strategy = create_server_strategy(
+            baseline_name,
+            config=u_cfg,
+            out_degree=3,
+            time_varying=True,
+        )
+        assert isinstance(override_strategy, DFedPGPServerStrategy)
+        assert override_strategy.out_degree == 3
+        assert override_strategy.time_varying is True
 
 
 def test_server_trigger_round_dispatch_client_weights() -> None:

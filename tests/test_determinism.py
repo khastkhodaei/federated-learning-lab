@@ -1,8 +1,12 @@
+import copy
+
 import pytest
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.baselines.dfedpgp.strategy import DFedPGPServerStrategy
+from src.baselines.dfedpgp.trainer import DFedPGPClientTrainer
 from src.baselines.ditto.trainer import DittoClientTrainer
 from src.baselines.fedavg.strategy import FedAvgServerStrategy
 from src.baselines.fedavg.trainer import FedAvgClientTrainer
@@ -35,7 +39,7 @@ def test_model_seed_reproducibility() -> None:
 
 
 def test_client_trainer_trajectory_determinism() -> None:
-    """Verifies bit-exact trajectory determinism across all five baseline client trainers."""
+    """Verifies bit-exact trajectory determinism across all six baseline client trainers."""
     device = torch.device("cpu")
     torch.manual_seed(999)
 
@@ -50,6 +54,7 @@ def test_client_trainer_trajectory_determinism() -> None:
         ("ditto", DittoClientTrainer(lambda_penalty=0.1, personalized_epochs=1)),
         ("perfedavg", PerFedAvgClientTrainer(alpha_lr=0.01, beta_lr=0.005)),
         ("pfedgraph", PFedGraphClientTrainer()),
+        ("dfedpgp", DFedPGPClientTrainer()),
     ]
 
     for name, trainer in trainers:
@@ -63,7 +68,10 @@ def test_client_trainer_trajectory_determinism() -> None:
         opt1 = torch.optim.SGD(m1.parameters(), lr=0.01)
         opt2 = torch.optim.SGD(m2.parameters(), lr=0.01)
 
-        w1, n1, met1 = getattr(trainer, "train")(
+        trainer1 = copy.deepcopy(trainer)
+        trainer2 = copy.deepcopy(trainer)
+
+        w1, n1, met1 = getattr(trainer1, "train")(
             model=m1,
             dataloader=loader1,
             epochs=1,
@@ -73,7 +81,7 @@ def test_client_trainer_trajectory_determinism() -> None:
             global_weights=initial_bytes,
         )
 
-        w2, n2, met2 = getattr(trainer, "train")(
+        w2, n2, met2 = getattr(trainer2, "train")(
             model=m2,
             dataloader=loader2,
             epochs=1,
@@ -131,3 +139,25 @@ def test_strategy_aggregation_determinism() -> None:
         assert torch.equal(s_pfed1.adjacency_matrix, s_pfed2.adjacency_matrix), (
             "pFedGraph adjacency matrix is non-deterministic"
         )
+
+    # 3. DFedPGPServerStrategy determinism
+    s_dfed1 = DFedPGPServerStrategy(out_degree=1, seed=42)
+    s_dfed2 = DFedPGPServerStrategy(out_degree=1, seed=42)
+    g_dfed1 = SimpleCNN(seed=42)
+    g_dfed2 = SimpleCNN(seed=42)
+
+    res_dfed1 = s_dfed1.aggregate(g_dfed1, updates, round_id=1, client_ids=client_ids)
+    res_dfed2 = s_dfed2.aggregate(g_dfed2, updates, round_id=1, client_ids=client_ids)
+
+    assert res_dfed1 == res_dfed2, "DFedPGP global model aggregation is non-deterministic"
+    assert s_dfed1.client_weights == s_dfed2.client_weights, (
+        "DFedPGP personalized client models are non-deterministic"
+    )
+    assert s_dfed1.push_sum_weights is not None and s_dfed2.push_sum_weights is not None
+    assert torch.equal(s_dfed1.push_sum_weights, s_dfed2.push_sum_weights), (
+        "DFedPGP push-sum weights are non-deterministic"
+    )
+    assert s_dfed1.mixing_matrix is not None and s_dfed2.mixing_matrix is not None
+    assert torch.equal(s_dfed1.mixing_matrix, s_dfed2.mixing_matrix), (
+        "DFedPGP mixing matrix is non-deterministic"
+    )
