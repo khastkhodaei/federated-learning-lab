@@ -12,6 +12,7 @@ import yaml
 
 from src.client.config import (
     ClientConfig,
+    parse_dfedpgp_client_config,
 )
 from src.client.config import (
     DatasetConfig as ClientDatasetConfig,
@@ -120,6 +121,18 @@ class PFedGraphConfig:
 
 
 @dataclass
+class DFedPGPConfig:
+    """Hyperparameters for DFedPGP decentralized partial personalization."""
+
+    out_degree: int = 1
+    time_varying: bool = True
+    lr_backbone: float | None = None
+    lr_head: float | None = None
+    head_epochs: int | None = None
+    backbone_epochs: int | None = None
+
+
+@dataclass
 class BaselinesConfig:
     """Registry of typed baseline-specific hyperparameter configurations."""
 
@@ -128,6 +141,7 @@ class BaselinesConfig:
     ditto: DittoConfig = field(default_factory=DittoConfig)
     perfedavg: PerFedAvgConfig = field(default_factory=PerFedAvgConfig)
     pfedgraph: PFedGraphConfig = field(default_factory=PFedGraphConfig)
+    dfedpgp: DFedPGPConfig = field(default_factory=DFedPGPConfig)
     scaffold: ScaffoldConfig = field(default_factory=ScaffoldConfig)
     pdfl: PdflConfig = field(default_factory=PdflConfig)
 
@@ -176,6 +190,7 @@ class UnifiedConfig:
     ) -> ClientConfig:
         """Translates unified parameters into individual client node specifications."""
         from src.client.config import (
+            DFedPGPClientConfig,
             DittoClientConfig,
             FedProxClientConfig,
             PerFedAvgClientConfig,
@@ -195,6 +210,8 @@ class UnifiedConfig:
         pfedgraph_cfg = getattr(self.baselines, "pfedgraph", None)
         graph_alpha = getattr(pfedgraph_cfg, "alpha", 0.1) if pfedgraph_cfg else 0.1
         graph_lam = getattr(pfedgraph_cfg, "lam", 0.01) if pfedgraph_cfg else 0.01
+
+        dfedpgp_cfg = getattr(self.baselines, "dfedpgp", None)
 
         return ClientConfig(
             node_id=f"client_{client_id}",
@@ -238,6 +255,12 @@ class UnifiedConfig:
             pfedgraph=PFedGraphClientConfig(
                 alpha=graph_alpha,
                 lam=graph_lam,
+            ),
+            dfedpgp=DFedPGPClientConfig(
+                lr_backbone=getattr(dfedpgp_cfg, "lr_backbone", None),
+                lr_head=getattr(dfedpgp_cfg, "lr_head", None),
+                head_epochs=getattr(dfedpgp_cfg, "head_epochs", None),
+                backbone_epochs=getattr(dfedpgp_cfg, "backbone_epochs", None),
             ),
         )
 
@@ -323,7 +346,12 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
     ditto_data = bl_data.get("ditto", {})
     perfedavg_data = bl_data.get("perfedavg", {}) or bl_data.get("per_fedavg", {})
     pfedgraph_data = bl_data.get("pfedgraph", {})
+    dfedpgp_data = bl_data.get("dfedpgp") or {}
+    dfedpgp_trainer_cfg = parse_dfedpgp_client_config(dfedpgp_data)
     pdfl_data = bl_data.get("pdfl", {})
+
+    raw_out_degree = dfedpgp_data.get("out_degree")
+    raw_time_varying = dfedpgp_data.get("time_varying")
 
     bl_cfg = BaselinesConfig(
         fedavg=FedAvgConfig(),
@@ -339,6 +367,14 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
         pfedgraph=PFedGraphConfig(
             alpha=float(pfedgraph_data.get("alpha", 0.1)),
             lam=float(pfedgraph_data.get("lam", pfedgraph_data.get("lambda", 0.01))),
+        ),
+        dfedpgp=DFedPGPConfig(
+            out_degree=int(raw_out_degree) if raw_out_degree is not None else 1,
+            time_varying=bool(raw_time_varying) if raw_time_varying is not None else True,
+            lr_backbone=dfedpgp_trainer_cfg.lr_backbone,
+            lr_head=dfedpgp_trainer_cfg.lr_head,
+            head_epochs=dfedpgp_trainer_cfg.head_epochs,
+            backbone_epochs=dfedpgp_trainer_cfg.backbone_epochs,
         ),
         scaffold=ScaffoldConfig(),
         pdfl=PdflConfig(

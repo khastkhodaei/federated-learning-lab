@@ -1,11 +1,14 @@
 import random
 from collections import deque
+from pathlib import Path
 
 import pytest
 import torch
+import yaml
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.baselines import create_server_strategy, get_baseline
 from src.baselines.dfedpgp import (
     DEFAULT_HEAD_PREFIXES,
     DFedPGPClientTrainer,
@@ -16,9 +19,17 @@ from src.baselines.dfedpgp import (
     partition_model,
     split_named_parameters,
 )
+from src.client.config import (
+    ClientConfig,
+    DFedPGPClientConfig,
+    create_trainer,
+    create_trainer_from_config,
+    load_client_config,
+)
 from src.client.node import Node
 from src.models.cnn import SimpleCNN
 from src.transport.federated_pb2 import TrainRequest
+from src.utils.config import DFedPGPConfig, UnifiedConfig, load_unified_config
 from src.utils.serialization import (
     bytes_to_vector,
     model_to_bytes,
@@ -1021,3 +1032,212 @@ def test_dfedpgp_trainer_train_rejects_invalid_overrides_and_head_dim_mismatch()
             optimizer=torch.optim.SGD(mismatched_model.parameters(), lr=0.05),
             device=torch.device("cpu"),
         )
+
+
+def test_dfedpgp_baseline_registry_and_server_strategy_factory() -> None:
+    import src.baselines as baselines_pkg
+
+    strategy_cls, trainer_cls = get_baseline("dfedpgp")
+    assert strategy_cls is DFedPGPServerStrategy
+    assert trainer_cls is DFedPGPClientTrainer
+    assert baselines_pkg.DFedPGPServerStrategy is DFedPGPServerStrategy
+    assert baselines_pkg.DFedPGPClientTrainer is DFedPGPClientTrainer
+    assert baselines_pkg.DFedPGPTrainer is DFedPGPTrainer
+
+    default_strategy = create_server_strategy("dfedpgp")
+    assert isinstance(default_strategy, DFedPGPServerStrategy)
+    assert default_strategy.out_degree == 1
+    assert default_strategy.seed == 42
+    assert default_strategy.time_varying is True
+
+    cfg = UnifiedConfig(seed=77)
+    cfg.baselines.dfedpgp = DFedPGPConfig(out_degree=2, time_varying=False)
+
+    cfg_strategy = create_server_strategy(
+        "dfedpgp",
+        config=cfg,
+        out_degree=None,
+        seed=None,
+        time_varying=None,
+    )
+    assert isinstance(cfg_strategy, DFedPGPServerStrategy)
+    assert cfg_strategy.out_degree == 2
+    assert cfg_strategy.seed == 77
+    assert cfg_strategy.time_varying is False
+
+    override_strategy = create_server_strategy(
+        "dfedpgp",
+        config=cfg,
+        out_degree=3,
+        seed=123,
+        time_varying=True,
+    )
+    assert isinstance(override_strategy, DFedPGPServerStrategy)
+    assert override_strategy.out_degree == 3
+    assert override_strategy.seed == 123
+    assert override_strategy.time_varying is True
+
+
+def test_dfedpgp_unified_config_yaml_loading_and_to_client_config(tmp_path: Path) -> None:
+    from src.config import DFedPGPConfig as ConfigPkgDFedPGPConfig
+    from src.config.unified import DFedPGPConfig as UnifiedModuleDFedPGPConfig
+
+    assert ConfigPkgDFedPGPConfig is DFedPGPConfig
+    assert UnifiedModuleDFedPGPConfig is DFedPGPConfig
+
+    repo_config_path = Path(__file__).resolve().parent.parent / "configs" / "config.yaml"
+    with open(repo_config_path, "r", encoding="utf-8") as f:
+        raw_repo_yaml = yaml.safe_load(f)
+    assert raw_repo_yaml["baselines"]["dfedpgp"] == {"out_degree": 1, "time_varying": True}
+
+    repo_cfg = load_unified_config(repo_config_path)
+    assert repo_cfg.baselines.dfedpgp == DFedPGPConfig(
+        out_degree=1,
+        time_varying=True,
+        lr_backbone=None,
+        lr_head=None,
+        head_epochs=None,
+        backbone_epochs=None,
+    )
+
+    custom_yaml = tmp_path / "dfedpgp_custom.yaml"
+    custom_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "algorithm": "dfedpgp",
+                "seed": 19,
+                "baselines": {
+                    "dfedpgp": {
+                        "out_degree": 2,
+                        "time_varying": False,
+                        "lr_backbone": 0.02,
+                        "lr_head": 0.05,
+                        "head_epochs": 3,
+                        "backbone_epochs": 1,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    custom_cfg = load_unified_config(custom_yaml)
+    assert custom_cfg.algorithm == "dfedpgp"
+    assert custom_cfg.baselines.dfedpgp == DFedPGPConfig(
+        out_degree=2,
+        time_varying=False,
+        lr_backbone=0.02,
+        lr_head=0.05,
+        head_epochs=3,
+        backbone_epochs=1,
+    )
+
+    client_cfg = custom_cfg.to_client_config(client_id=1)
+    assert client_cfg.algorithm == "dfedpgp"
+    assert client_cfg.dfedpgp.lr_backbone == 0.02
+    assert client_cfg.dfedpgp.lr_head == 0.05
+    assert client_cfg.dfedpgp.head_epochs == 3
+    assert client_cfg.dfedpgp.backbone_epochs == 1
+
+    null_yaml = tmp_path / "dfedpgp_nulls.yaml"
+    null_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "algorithm": "dfedpgp",
+                "baselines": {
+                    "dfedpgp": {
+                        "out_degree": 2,
+                        "time_varying": False,
+                        "lr_backbone": None,
+                        "lr_head": None,
+                        "head_epochs": None,
+                        "backbone_epochs": None,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    null_cfg = load_unified_config(null_yaml)
+    assert null_cfg.baselines.dfedpgp.lr_backbone is None
+    assert null_cfg.baselines.dfedpgp.lr_head is None
+    assert null_cfg.baselines.dfedpgp.head_epochs is None
+    assert null_cfg.baselines.dfedpgp.backbone_epochs is None
+
+
+def test_dfedpgp_client_config_yaml_loading_and_trainer_factory(tmp_path: Path) -> None:
+    top_level_yaml = tmp_path / "client_top_level.yaml"
+    top_level_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "algorithm": "dfedpgp",
+                "dfedpgp": {
+                    "lr_backbone": 0.03,
+                    "lr_head": 0.06,
+                    "head_epochs": 2,
+                    "backbone_epochs": 4,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    top_cfg = load_client_config(top_level_yaml)
+    assert top_cfg.algorithm == "dfedpgp"
+    assert top_cfg.dfedpgp == DFedPGPClientConfig(
+        lr_backbone=0.03,
+        lr_head=0.06,
+        head_epochs=2,
+        backbone_epochs=4,
+    )
+
+    nested_yaml = tmp_path / "client_nested.yaml"
+    nested_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "algorithm": "dfedpgp",
+                "baselines": {
+                    "dfedpgp": {
+                        "lr_backbone": 0.015,
+                        "lr_head": None,
+                        "head_epochs": 3,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    nested_cfg = load_client_config(nested_yaml)
+    assert nested_cfg.dfedpgp == DFedPGPClientConfig(
+        lr_backbone=0.015,
+        lr_head=None,
+        head_epochs=3,
+        backbone_epochs=None,
+    )
+
+    trainer_direct = create_trainer(
+        "dfedpgp",
+        lr_backbone=0.02,
+        lr_head=0.04,
+        head_epochs=2,
+        backbone_epochs=3,
+    )
+    assert isinstance(trainer_direct, DFedPGPClientTrainer)
+    assert trainer_direct.lr_backbone == 0.02
+    assert trainer_direct.lr_head == 0.04
+    assert trainer_direct.head_epochs == 2
+    assert trainer_direct.backbone_epochs == 3
+
+    trainer_from_cfg = create_trainer_from_config(top_cfg)
+    assert isinstance(trainer_from_cfg, DFedPGPClientTrainer)
+    assert trainer_from_cfg.lr_backbone == 0.03
+    assert trainer_from_cfg.lr_head == 0.06
+    assert trainer_from_cfg.head_epochs == 2
+    assert trainer_from_cfg.backbone_epochs == 4
+
+    default_client_cfg = ClientConfig(algorithm="dfedpgp")
+    default_trainer = create_trainer_from_config(default_client_cfg)
+    assert isinstance(default_trainer, DFedPGPClientTrainer)
+    assert default_trainer.lr_backbone is None
+    assert default_trainer.lr_head is None
+    assert default_trainer.head_epochs is None
+    assert default_trainer.backbone_epochs is None

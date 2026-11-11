@@ -93,6 +93,30 @@ class PFedGraphClientConfig:
 
 
 @dataclass
+class DFedPGPClientConfig:
+    """Hyperparameters for DFedPGP partial personalization on the client."""
+
+    lr_backbone: float | None = None
+    lr_head: float | None = None
+    head_epochs: int | None = None
+    backbone_epochs: int | None = None
+
+
+def parse_dfedpgp_client_config(data: dict[str, Any]) -> DFedPGPClientConfig:
+    """Parses optional DFedPGP trainer fields, preserving None when omitted or null."""
+    lr_backbone = data.get("lr_backbone")
+    lr_head = data.get("lr_head")
+    head_epochs = data.get("head_epochs")
+    backbone_epochs = data.get("backbone_epochs")
+    return DFedPGPClientConfig(
+        lr_backbone=float(lr_backbone) if lr_backbone is not None else None,
+        lr_head=float(lr_head) if lr_head is not None else None,
+        head_epochs=int(head_epochs) if head_epochs is not None else None,
+        backbone_epochs=int(backbone_epochs) if backbone_epochs is not None else None,
+    )
+
+
+@dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
 
@@ -108,6 +132,7 @@ class ClientConfig:
     ditto: DittoClientConfig = field(default_factory=DittoClientConfig)
     perfedavg: PerFedAvgClientConfig = field(default_factory=PerFedAvgClientConfig)
     pfedgraph: PFedGraphClientConfig = field(default_factory=PFedGraphClientConfig)
+    dfedpgp: DFedPGPClientConfig = field(default_factory=DFedPGPClientConfig)
 
 
 def load_client_config(
@@ -234,6 +259,9 @@ def load_client_config(
         lam=float(pfedgraph_data.get("lam", pfedgraph_data.get("lambda", 0.01))),
     )
 
+    dfedpgp_data = data.get("dfedpgp") or (data.get("baselines") or {}).get("dfedpgp") or {}
+    dfedpgp_cfg = parse_dfedpgp_client_config(dfedpgp_data)
+
     return ClientConfig(
         node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
@@ -247,6 +275,7 @@ def load_client_config(
         ditto=ditto_cfg,
         perfedavg=perfedavg_cfg,
         pfedgraph=pfedgraph_cfg,
+        dfedpgp=dfedpgp_cfg,
     )
 
 
@@ -307,11 +336,24 @@ def create_trainer(
     personalized_epochs: int = 1,
     alpha_lr: float = 0.01,
     beta_lr: float = 0.005,
+    lr_backbone: float | None = None,
+    lr_head: float | None = None,
+    head_epochs: int | None = None,
+    backbone_epochs: int | None = None,
     **kwargs: Any,
 ) -> Any:
     """Factory creating a ClientTrainer instance according to the selected algorithm."""
     algo = algorithm.lower().strip()
-    if algo in ("pfedgraph", "graph"):
+    if algo in ("dfedpgp",):
+        from src.baselines.dfedpgp.trainer import DFedPGPClientTrainer
+
+        return DFedPGPClientTrainer(
+            lr_backbone=lr_backbone,
+            lr_head=lr_head,
+            head_epochs=head_epochs,
+            backbone_epochs=backbone_epochs,
+        )
+    elif algo in ("pfedgraph", "graph"):
         from src.baselines.pfedgraph.trainer import PFedGraphClientTrainer
 
         return PFedGraphClientTrainer()
@@ -365,6 +407,7 @@ def create_trainer_from_config(config: ClientConfig) -> ClientTrainer:
     beta_val = (
         getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg is not None else 0.005
     )
+    dfedpgp_cfg = getattr(config, "dfedpgp", None)
     return create_trainer(
         algorithm=algorithm_name,
         mu=mu_val,
@@ -372,6 +415,10 @@ def create_trainer_from_config(config: ClientConfig) -> ClientTrainer:
         personalized_epochs=pers_epochs,
         alpha_lr=alpha_val,
         beta_lr=beta_val,
+        lr_backbone=getattr(dfedpgp_cfg, "lr_backbone", None),
+        lr_head=getattr(dfedpgp_cfg, "lr_head", None),
+        head_epochs=getattr(dfedpgp_cfg, "head_epochs", None),
+        backbone_epochs=getattr(dfedpgp_cfg, "backbone_epochs", None),
     )
 
 

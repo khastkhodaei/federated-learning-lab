@@ -3,6 +3,7 @@
 from src.utils.config import (
     BaselinesConfig,
     DatasetConfig,
+    DFedPGPConfig,
     FedAvgConfig,
     FedProxConfig,
     GlobalConfig,
@@ -17,6 +18,7 @@ from src.utils.config import (
 
 __all__ = [
     "BaselinesConfig",
+    "DFedPGPConfig",
     "DatasetConfig",
     "FedAvgConfig",
     "FedProxConfig",
