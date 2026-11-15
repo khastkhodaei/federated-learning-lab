@@ -2,6 +2,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.baselines import BASELINES, create_server_strategy, get_baseline
 from src.baselines.dfpl import (
     DFPLClientTrainer,
     DFPLServerStrategy,
@@ -11,8 +12,10 @@ from src.baselines.dfpl import (
     prototypes_to_bytes,
     prototypes_to_tensor,
 )
+from src.client.config import create_trainer, create_trainer_from_config
 from src.models.cnn import SimpleCNN
 from src.server.aggregation import fedavg_bytes
+from src.utils.config import load_unified_config
 from src.utils.serialization import model_to_bytes
 
 
@@ -470,5 +473,44 @@ def test_dfpl_server_strategy_normalization() -> None:
     for proto in strategy.global_prototypes.values():
         norm = torch.norm(proto, p=2)
         assert torch.allclose(norm, torch.tensor(1.0), atol=1e-5)
+
+
+def test_dfpl_baseline_registry() -> None:
+    assert "dfpl" in BASELINES
+    server_cls, client_cls = get_baseline("dfpl")
+    assert server_cls is DFPLServerStrategy
+    assert client_cls is DFPLClientTrainer
+    strategy = create_server_strategy("dfpl")
+    assert isinstance(strategy, DFPLServerStrategy)
+
+
+def test_dfpl_create_trainer_from_factory() -> None:
+    trainer = create_trainer("dfpl", lambda_proto=0.25)
+    assert isinstance(trainer, DFPLClientTrainer)
+    assert trainer.lambda_proto == 0.25
+
+
+def test_dfpl_config_yaml_loading() -> None:
+    cfg = load_unified_config("configs/config.yaml")
+    assert hasattr(cfg.baselines, "dfpl")
+    assert cfg.baselines.dfpl.lambda_proto == 0.1
+    assert cfg.baselines.dfpl.normalize_prototypes is False
+    assert cfg.baselines.dfpl.loss_type == "mse"
+    assert cfg.baselines.dfpl.aggregate_weights is True
+
+
+def test_dfpl_to_client_config_and_trainer() -> None:
+    cfg = load_unified_config("configs/config.yaml")
+    cfg.algorithm = "dfpl"
+    cfg.baseline = "dfpl"
+    client_cfg = cfg.to_client_config(client_id=1)
+    assert hasattr(client_cfg, "dfpl")
+    assert client_cfg.dfpl.lambda_proto == 0.1
+    assert client_cfg.algorithm == "dfpl"
+
+    trainer = create_trainer_from_config(client_cfg)
+    assert isinstance(trainer, DFPLClientTrainer)
+    assert trainer.lambda_proto == 0.1
+
 
 

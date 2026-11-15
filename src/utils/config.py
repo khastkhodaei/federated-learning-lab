@@ -13,6 +13,7 @@ import yaml
 from src.client.config import (
     ClientConfig,
     parse_dfedpgp_client_config,
+    parse_dfpl_client_config,
 )
 from src.client.config import (
     DatasetConfig as ClientDatasetConfig,
@@ -133,6 +134,16 @@ class DFedPGPConfig:
 
 
 @dataclass
+class DFPLConfig:
+    """Hyperparameters for DFPL decentralized federated prototype learning."""
+
+    lambda_proto: float = 0.1
+    normalize_prototypes: bool = False
+    loss_type: str = "mse"
+    aggregate_weights: bool = True
+
+
+@dataclass
 class BaselinesConfig:
     """Registry of typed baseline-specific hyperparameter configurations."""
 
@@ -142,6 +153,7 @@ class BaselinesConfig:
     perfedavg: PerFedAvgConfig = field(default_factory=PerFedAvgConfig)
     pfedgraph: PFedGraphConfig = field(default_factory=PFedGraphConfig)
     dfedpgp: DFedPGPConfig = field(default_factory=DFedPGPConfig)
+    dfpl: DFPLConfig = field(default_factory=DFPLConfig)
     scaffold: ScaffoldConfig = field(default_factory=ScaffoldConfig)
     pdfl: PdflConfig = field(default_factory=PdflConfig)
 
@@ -191,6 +203,7 @@ class UnifiedConfig:
         """Translates unified parameters into individual client node specifications."""
         from src.client.config import (
             DFedPGPClientConfig,
+            DFPLClientConfig,
             DittoClientConfig,
             FedProxClientConfig,
             PerFedAvgClientConfig,
@@ -212,6 +225,7 @@ class UnifiedConfig:
         graph_lam = getattr(pfedgraph_cfg, "lam", 0.01) if pfedgraph_cfg else 0.01
 
         dfedpgp_cfg = getattr(self.baselines, "dfedpgp", None)
+        dfpl_cfg = getattr(self.baselines, "dfpl", None)
 
         return ClientConfig(
             node_id=f"client_{client_id}",
@@ -261,6 +275,13 @@ class UnifiedConfig:
                 lr_head=getattr(dfedpgp_cfg, "lr_head", None),
                 head_epochs=getattr(dfedpgp_cfg, "head_epochs", None),
                 backbone_epochs=getattr(dfedpgp_cfg, "backbone_epochs", None),
+            ),
+            dfpl=DFPLClientConfig(
+                lambda_proto=getattr(dfpl_cfg, "lambda_proto", 0.1) if dfpl_cfg else 0.1,
+                normalize_prototypes=getattr(dfpl_cfg, "normalize_prototypes", False)
+                if dfpl_cfg
+                else False,
+                loss_type=getattr(dfpl_cfg, "loss_type", "mse") if dfpl_cfg else "mse",
             ),
         )
 
@@ -348,6 +369,9 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
     pfedgraph_data = bl_data.get("pfedgraph", {})
     dfedpgp_data = bl_data.get("dfedpgp") or {}
     dfedpgp_trainer_cfg = parse_dfedpgp_client_config(dfedpgp_data)
+    dfpl_data = bl_data.get("dfpl") or {}
+    dfpl_client_cfg = parse_dfpl_client_config(dfpl_data)
+    raw_aggregate_weights = dfpl_data.get("aggregate_weights", True)
     pdfl_data = bl_data.get("pdfl", {})
 
     raw_out_degree = dfedpgp_data.get("out_degree")
@@ -375,6 +399,12 @@ def load_unified_config(config_path: str | Path) -> UnifiedConfig:
             lr_head=dfedpgp_trainer_cfg.lr_head,
             head_epochs=dfedpgp_trainer_cfg.head_epochs,
             backbone_epochs=dfedpgp_trainer_cfg.backbone_epochs,
+        ),
+        dfpl=DFPLConfig(
+            lambda_proto=dfpl_client_cfg.lambda_proto,
+            normalize_prototypes=dfpl_client_cfg.normalize_prototypes,
+            loss_type=dfpl_client_cfg.loss_type,
+            aggregate_weights=bool(raw_aggregate_weights),
         ),
         scaffold=ScaffoldConfig(),
         pdfl=PdflConfig(

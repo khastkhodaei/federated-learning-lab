@@ -2,6 +2,7 @@ from typing import Any
 
 from .base import ClientTrainer, ServerStrategy
 from .dfedpgp import DFedPGPClientTrainer, DFedPGPServerStrategy, DFedPGPTrainer
+from .dfpl import DFPLClientTrainer, DFPLServerStrategy, DFPLTrainer
 from .ditto import DittoClientTrainer, DittoServerStrategy, DittoTrainer
 from .fedavg import FedAvgClientTrainer, FedAvgServerStrategy
 from .fedprox import FedProxClientTrainer, FedProxServerStrategy, FedProxTrainer
@@ -15,6 +16,7 @@ BASELINES: dict[str, tuple[type[ServerStrategy], type[ClientTrainer]]] = {
     "perfedavg": (PerFedAvgServerStrategy, PerFedAvgClientTrainer),
     "pfedgraph": (PFedGraphServerStrategy, PFedGraphClientTrainer),
     "dfedpgp": (DFedPGPServerStrategy, DFedPGPClientTrainer),
+    "dfpl": (DFPLServerStrategy, DFPLClientTrainer),
 }
 
 
@@ -69,6 +71,14 @@ def create_server_strategy(
             seed=int(seed),
             time_varying=bool(time_varying),
         )
+    if key == "dfpl":
+        dfpl_cfg = getattr(config.baselines, "dfpl", None) if hasattr(config, "baselines") else None
+        normalize_prototypes = _resolve_strategy_param(kwargs, "normalize_prototypes", dfpl_cfg, False)
+        aggregate_weights = _resolve_strategy_param(kwargs, "aggregate_weights", dfpl_cfg, True)
+        return strategy_cls(
+            normalize_prototypes=bool(normalize_prototypes),
+            aggregate_weights=bool(aggregate_weights),
+        )
     if key == "pfedgraph":
         alpha = kwargs.get("alpha")
         if alpha is None and "graph_alpha" in kwargs:
@@ -102,6 +112,9 @@ __all__ = [
     "DFedPGPClientTrainer",
     "DFedPGPServerStrategy",
     "DFedPGPTrainer",
+    "DFPLClientTrainer",
+    "DFPLServerStrategy",
+    "DFPLTrainer",
     "DittoClientTrainer",
     "DittoServerStrategy",
     "DittoTrainer",

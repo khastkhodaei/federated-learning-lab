@@ -117,6 +117,27 @@ def parse_dfedpgp_client_config(data: dict[str, Any]) -> DFedPGPClientConfig:
 
 
 @dataclass
+class DFPLClientConfig:
+    """Hyperparameters for DFPL prototype learning on the client."""
+
+    lambda_proto: float = 0.1
+    normalize_prototypes: bool = False
+    loss_type: str = "mse"
+
+
+def parse_dfpl_client_config(data: dict[str, Any]) -> DFPLClientConfig:
+    """Parses DFPL client configuration fields with defaults."""
+    lambda_proto = data.get("lambda_proto", data.get("lambda", 0.1))
+    normalize_prototypes = data.get("normalize_prototypes", False)
+    loss_type = data.get("loss_type", "mse")
+    return DFPLClientConfig(
+        lambda_proto=float(lambda_proto) if lambda_proto is not None else 0.1,
+        normalize_prototypes=bool(normalize_prototypes),
+        loss_type=str(loss_type) if loss_type is not None else "mse",
+    )
+
+
+@dataclass
 class ClientConfig:
     """Complete configuration specification for an individual client node."""
 
@@ -133,6 +154,7 @@ class ClientConfig:
     perfedavg: PerFedAvgClientConfig = field(default_factory=PerFedAvgClientConfig)
     pfedgraph: PFedGraphClientConfig = field(default_factory=PFedGraphClientConfig)
     dfedpgp: DFedPGPClientConfig = field(default_factory=DFedPGPClientConfig)
+    dfpl: DFPLClientConfig = field(default_factory=DFPLClientConfig)
 
 
 def load_client_config(
@@ -262,6 +284,9 @@ def load_client_config(
     dfedpgp_data = data.get("dfedpgp") or (data.get("baselines") or {}).get("dfedpgp") or {}
     dfedpgp_cfg = parse_dfedpgp_client_config(dfedpgp_data)
 
+    dfpl_data = data.get("dfpl") or (data.get("baselines") or {}).get("dfpl") or {}
+    dfpl_cfg = parse_dfpl_client_config(dfpl_data)
+
     return ClientConfig(
         node_id=effective_node_id,
         server_address=str(data.get("server_address", "127.0.0.1:50051")),
@@ -276,6 +301,7 @@ def load_client_config(
         perfedavg=perfedavg_cfg,
         pfedgraph=pfedgraph_cfg,
         dfedpgp=dfedpgp_cfg,
+        dfpl=dfpl_cfg,
     )
 
 
@@ -340,6 +366,9 @@ def create_trainer(
     lr_head: float | None = None,
     head_epochs: int | None = None,
     backbone_epochs: int | None = None,
+    lambda_proto: float = 0.1,
+    normalize_prototypes: bool = False,
+    loss_type: str = "mse",
     **kwargs: Any,
 ) -> Any:
     """Factory creating a ClientTrainer instance according to the selected algorithm."""
@@ -352,6 +381,14 @@ def create_trainer(
             lr_head=lr_head,
             head_epochs=head_epochs,
             backbone_epochs=backbone_epochs,
+        )
+    elif algo in ("dfpl", "prototype"):
+        from src.baselines.dfpl.trainer import DFPLClientTrainer
+
+        return DFPLClientTrainer(
+            lambda_proto=lambda_proto,
+            normalize_prototypes=normalize_prototypes,
+            loss_type=loss_type,
         )
     elif algo in ("pfedgraph", "graph"):
         from src.baselines.pfedgraph.trainer import PFedGraphClientTrainer
@@ -408,6 +445,7 @@ def create_trainer_from_config(config: ClientConfig) -> ClientTrainer:
         getattr(perfedavg_cfg, "beta_lr", 0.005) if perfedavg_cfg is not None else 0.005
     )
     dfedpgp_cfg = getattr(config, "dfedpgp", None)
+    dfpl_cfg = getattr(config, "dfpl", None)
     return create_trainer(
         algorithm=algorithm_name,
         mu=mu_val,
@@ -419,6 +457,11 @@ def create_trainer_from_config(config: ClientConfig) -> ClientTrainer:
         lr_head=getattr(dfedpgp_cfg, "lr_head", None),
         head_epochs=getattr(dfedpgp_cfg, "head_epochs", None),
         backbone_epochs=getattr(dfedpgp_cfg, "backbone_epochs", None),
+        lambda_proto=getattr(dfpl_cfg, "lambda_proto", 0.1) if dfpl_cfg is not None else 0.1,
+        normalize_prototypes=getattr(dfpl_cfg, "normalize_prototypes", False)
+        if dfpl_cfg is not None
+        else False,
+        loss_type=getattr(dfpl_cfg, "loss_type", "mse") if dfpl_cfg is not None else "mse",
     )
 
 
