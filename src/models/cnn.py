@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,9 +21,20 @@ class SimpleCNN(nn.Module):
         self.fc1 = nn.Linear(64 * 8 * 8, 128)
         self.fc_out = nn.Linear(128, num_classes)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def extract_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract intermediate 128-dimensional representation embeddings before classification."""
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = torch.flatten(x, start_dim=1)
-        x = F.relu(self.fc1(x))
-        return self.fc_out(x)
+        return F.relu(self.fc1(x))
+
+    def forward(
+        self, x: torch.Tensor, return_features: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Compute logits and optionally return intermediate representation embeddings."""
+        features = self.extract_features(x)
+        logits = self.fc_out(features)
+        if return_features:
+            return logits, features
+        return logits
+
