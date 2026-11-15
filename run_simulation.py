@@ -69,6 +69,9 @@ def run_federated_simulation(
     lr_head: float | None = None,
     head_epochs: int | None = None,
     backbone_epochs: int | None = None,
+    # DFPL
+    lambda_proto: float | None = None,
+    loss_type: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Runs a complete federated training simulation across any supported baseline.
@@ -77,7 +80,7 @@ def run_federated_simulation(
         num_clients: Total number of participating clients.
         rounds: Number of federated training rounds.
         epochs: Local training epochs per client per round.
-        algorithm: Selected algorithm ('fedavg', 'fedprox', 'ditto', 'perfedavg', 'pfedgraph', 'dfedpgp').
+        algorithm: Selected algorithm ('fedavg', 'fedprox', 'ditto', 'perfedavg', 'pfedgraph', 'dfedpgp', 'dfpl').
         config_path: Path to unified YAML configuration file.
         reports_dir: Directory where baseline report artifacts will be saved.
         server_port: Port for coordinator gRPC server (0 for ephemeral OS port).
@@ -96,6 +99,8 @@ def run_federated_simulation(
         lr_head: DFedPGP personal_head learning rate override.
         head_epochs: DFedPGP personal_head local epochs override.
         backbone_epochs: DFedPGP shared_backbone local epochs override.
+        lambda_proto: DFPL prototype alignment loss weight override.
+        loss_type: DFPL prototype alignment loss type ('mse' or 'cosine').
 
     Returns:
         Dictionary summarizing simulation results, metrics, and round history.
@@ -176,6 +181,11 @@ def run_federated_simulation(
             base_cfg.dfedpgp.head_epochs = int(head_epochs)
         if backbone_epochs is not None:
             base_cfg.dfedpgp.backbone_epochs = int(backbone_epochs)
+    elif eff_algo in ("dfpl",):
+        if lambda_proto is not None:
+            base_cfg.dfpl.lambda_proto = float(lambda_proto)
+        if loss_type is not None:
+            base_cfg.dfpl.loss_type = str(loss_type)
 
     # 4. Data Preparation
     fed_dataset = None
@@ -278,7 +288,7 @@ def run_federated_simulation(
 
             acc_label = (
                 "Personalized Local Acc"
-                if eff_algo in ("ditto", "perfedavg", "pfedgraph", "dfedpgp")
+                if eff_algo in ("ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl")
                 else "Local Acc"
             )
             logger.info(
@@ -383,6 +393,7 @@ run_ditto_simulation = lambda **kw: run_federated_simulation(algorithm="ditto", 
 run_perfedavg_simulation = lambda **kw: run_federated_simulation(algorithm="perfedavg", **kw)
 run_pfedgraph_simulation = lambda **kw: run_federated_simulation(algorithm="pfedgraph", **kw)
 run_dfedpgp_simulation = lambda **kw: run_federated_simulation(algorithm="dfedpgp", **kw)
+run_dfpl_simulation = lambda **kw: run_federated_simulation(algorithm="dfpl", **kw)
 
 
 def main() -> None:
@@ -396,7 +407,7 @@ def main() -> None:
         "-a",
         type=str,
         default=None,
-        choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"],
+        choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl"],
         help="Federated optimization algorithm baseline",
     )
     parser.add_argument(
@@ -543,6 +554,13 @@ def main() -> None:
         default=None,
         help="[DFedPGP] Local epochs override for shared_backbone updates",
     )
+    parser.add_argument(
+        "--lambda-proto",
+        dest="lambda_proto",
+        type=float,
+        default=None,
+        help="[DFPL] Prototype alignment loss regularization weight (default: 0.1)",
+    )
 
     args = parser.parse_args()
 
@@ -575,6 +593,7 @@ def main() -> None:
         lr_head=args.lr_head,
         head_epochs=args.head_epochs,
         backbone_epochs=args.backbone_epochs,
+        lambda_proto=args.lambda_proto,
     )
 
 

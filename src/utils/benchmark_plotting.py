@@ -57,6 +57,12 @@ ALGORITHM_STYLES = {
         "linestyle": "-",
         "label": "DFedPGP (Directed Push)",
     },
+    "dfpl": {
+        "color": "#e377c2",  # Orchid / Raspberry
+        "marker": "X",
+        "linestyle": "-",
+        "label": "DFPL (Prototype Alignment)",
+    },
 }
 
 DEFAULT_STYLE = {
@@ -87,6 +93,7 @@ def load_benchmark_metrics(
         "perfedavg",
         "pfedgraph",
         "dfedpgp",
+        "dfpl",
     ]
     base_dir = Path(reports_dir)
     results: dict[str, dict[str, Any]] = {}

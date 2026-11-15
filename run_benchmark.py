@@ -56,6 +56,10 @@ BENCHMARK_CONFIGS: dict[str, dict[str, Any]] = {
         "description": "DFedPGP (Directed Partial Gradient Push, out_degree=1)",
         "params": {"out_degree": 1, "time_varying": True},
     },
+    "dfpl": {
+        "description": "DFPL (Prototype Alignment, lambda=0.1)",
+        "params": {"lambda_proto": 0.1},
+    },
 }
 
 
@@ -252,7 +256,7 @@ def main() -> None:
         "--algorithms",
         "-a",
         nargs="+",
-        default=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"],
+        default=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl"],
         help="List of algorithms to benchmark",
     )
     parser.add_argument(

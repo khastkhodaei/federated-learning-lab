@@ -15,7 +15,7 @@ def mock_benchmark_dir(tmp_path: Path) -> Path:
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    algos = ["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"]
+    algos = ["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl"]
     for i, algo in enumerate(algos):
         algo_dir = reports_dir / algo
         algo_dir.mkdir(parents=True, exist_ok=True)
@@ -41,8 +41,8 @@ def mock_benchmark_dir(tmp_path: Path) -> Path:
 
 def test_load_benchmark_metrics(mock_benchmark_dir: Path) -> None:
     data = load_benchmark_metrics(reports_dir=mock_benchmark_dir)
-    assert len(data) == 6
-    for algo in ["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp"]:
+    assert len(data) == 7
+    for algo in ["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl"]:
         assert algo in data
         assert len(data[algo]["rounds"]) == 5
 
@@ -50,6 +50,8 @@ def test_load_benchmark_metrics(mock_benchmark_dir: Path) -> None:
 def test_plot_benchmark_summary(mock_benchmark_dir: Path, tmp_path: Path) -> None:
     assert "dfedpgp" in ALGORITHM_STYLES
     assert ALGORITHM_STYLES["dfedpgp"]["label"] == "DFedPGP (Directed Push)"
+    assert "dfpl" in ALGORITHM_STYLES
+    assert ALGORITHM_STYLES["dfpl"]["label"] == "DFPL (Prototype Alignment)"
 
     output_dir = tmp_path / "plots"
     artifacts = plot_benchmark_summary(
@@ -70,6 +72,8 @@ def test_plot_benchmark_summary(mock_benchmark_dir: Path, tmp_path: Path) -> Non
 def test_run_full_benchmark_synthetic(tmp_path: Path) -> None:
     assert "dfedpgp" in BENCHMARK_CONFIGS
     assert BENCHMARK_CONFIGS["dfedpgp"]["params"] == {"out_degree": 1, "time_varying": True}
+    assert "dfpl" in BENCHMARK_CONFIGS
+    assert BENCHMARK_CONFIGS["dfpl"]["params"] == {"lambda_proto": 0.1}
 
     output_dir = tmp_path / "benchmark_plots"
     results = run_full_benchmark(

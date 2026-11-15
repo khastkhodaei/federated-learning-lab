@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -511,6 +514,30 @@ def test_dfpl_to_client_config_and_trainer() -> None:
     trainer = create_trainer_from_config(client_cfg)
     assert isinstance(trainer, DFPLClientTrainer)
     assert trainer.lambda_proto == 0.1
+
+
+def test_dfpl_end_to_end_simulation(tmp_path: Path) -> None:
+    from run_simulation import run_federated_simulation
+
+    reports_dir = tmp_path / "reports"
+    results = run_federated_simulation(
+        algorithm="dfpl",
+        rounds=2,
+        num_clients=2,
+        epochs=1,
+        synthetic=True,
+        reports_dir=str(reports_dir),
+    )
+
+    assert results["algorithm"] == "dfpl"
+    assert len(results["round_history"]) == 2
+    metrics_file = reports_dir / "dfpl" / "metrics.json"
+    assert metrics_file.is_file()
+    with open(metrics_file, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["baseline"] == "dfpl"
+    assert len(payload["rounds"]) == 2
+
 
 
 
