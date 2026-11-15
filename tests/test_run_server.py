@@ -8,6 +8,7 @@ import pytest
 from run_server import ServerSettings, dispatch_round, resolve_server_settings
 from src.baselines import (
     DFedPGPServerStrategy,
+    DFPLServerStrategy,
     DittoServerStrategy,
     FedAvgServerStrategy,
     FedProxServerStrategy,
@@ -20,6 +21,7 @@ from src.transport.federated_pb2 import TrainResponse
 from src.utils.config import (
     BaselinesConfig,
     DFedPGPConfig,
+    DFPLConfig,
     PFedGraphConfig,
     UnifiedConfig,
     load_unified_config,
@@ -137,6 +139,7 @@ def test_resolve_server_settings_regression_real_unified_config() -> None:
         ("perfedavg", PerFedAvgServerStrategy),
         ("pfedgraph", PFedGraphServerStrategy),
         ("dfedpgp", DFedPGPServerStrategy),
+        ("dfpl", DFPLServerStrategy),
     ],
 )
 def test_strategy_factory_all_baselines(baseline_name: str, expected_cls: type) -> None:
@@ -146,6 +149,7 @@ def test_strategy_factory_all_baselines(baseline_name: str, expected_cls: type) 
         baselines=BaselinesConfig(
             pfedgraph=PFedGraphConfig(alpha=0.35, lam=0.07),
             dfedpgp=DFedPGPConfig(out_degree=2, time_varying=False),
+            dfpl=DFPLConfig(normalize_prototypes=True, aggregate_weights=True),
         ),
     )
 
@@ -181,6 +185,20 @@ def test_strategy_factory_all_baselines(baseline_name: str, expected_cls: type) 
         assert isinstance(override_strategy, DFedPGPServerStrategy)
         assert override_strategy.out_degree == 3
         assert override_strategy.time_varying is True
+    elif baseline_name == "dfpl":
+        assert isinstance(strategy, DFPLServerStrategy)
+        assert strategy.normalize_prototypes is True
+        assert strategy.aggregate_weights is True
+
+        override_strategy = create_server_strategy(
+            baseline_name,
+            config=u_cfg,
+            normalize_prototypes=False,
+            aggregate_weights=False,
+        )
+        assert isinstance(override_strategy, DFPLServerStrategy)
+        assert override_strategy.normalize_prototypes is False
+        assert override_strategy.aggregate_weights is False
 
 
 def test_server_trigger_round_dispatch_client_weights() -> None:

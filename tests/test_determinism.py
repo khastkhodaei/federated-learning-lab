@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.baselines.dfedpgp.strategy import DFedPGPServerStrategy
 from src.baselines.dfedpgp.trainer import DFedPGPClientTrainer
+from src.baselines.dfpl import DFPLClientTrainer, DFPLServerStrategy
 from src.baselines.ditto.trainer import DittoClientTrainer
 from src.baselines.fedavg.strategy import FedAvgServerStrategy
 from src.baselines.fedavg.trainer import FedAvgClientTrainer
@@ -55,6 +56,7 @@ def test_client_trainer_trajectory_determinism() -> None:
         ("perfedavg", PerFedAvgClientTrainer(alpha_lr=0.01, beta_lr=0.005)),
         ("pfedgraph", PFedGraphClientTrainer()),
         ("dfedpgp", DFedPGPClientTrainer()),
+        ("dfpl", DFPLClientTrainer(lambda_proto=0.1)),
     ]
 
     for name, trainer in trainers:
@@ -161,3 +163,35 @@ def test_strategy_aggregation_determinism() -> None:
     assert torch.equal(s_dfed1.mixing_matrix, s_dfed2.mixing_matrix), (
         "DFedPGP mixing matrix is non-deterministic"
     )
+
+    # 4. DFPLServerStrategy determinism
+    p1 = {0: torch.randn(128), 1: torch.randn(128)}
+    c1 = {0: 10, 1: 5}
+    p2 = {0: torch.randn(128), 2: torch.randn(128)}
+    c2 = {0: 30, 2: 20}
+    client_protos = [p1, p2]
+    client_counts = [c1, c2]
+
+    s_dfpl1 = DFPLServerStrategy(normalize_prototypes=True, aggregate_weights=True)
+    s_dfpl2 = DFPLServerStrategy(normalize_prototypes=True, aggregate_weights=True)
+    g_dfpl1 = SimpleCNN(seed=42)
+    g_dfpl2 = SimpleCNN(seed=42)
+
+    res_dfpl1 = s_dfpl1.aggregate(
+        g_dfpl1, updates, round_id=1, client_prototypes=client_protos, client_sample_counts=client_counts
+    )
+    res_dfpl2 = s_dfpl2.aggregate(
+        g_dfpl2, updates, round_id=1, client_prototypes=client_protos, client_sample_counts=client_counts
+    )
+
+    assert res_dfpl1 == res_dfpl2, "DFPL global model aggregation is non-deterministic"
+    for p1_param, p2_param in zip(g_dfpl1.parameters(), g_dfpl2.parameters()):
+        assert torch.equal(p1_param, p2_param)
+    assert s_dfpl1.global_prototypes_bytes == s_dfpl2.global_prototypes_bytes, (
+        "DFPL consensus prototype bytes are non-deterministic"
+    )
+    for k in s_dfpl1.global_prototypes:
+        assert torch.equal(s_dfpl1.global_prototypes[k], s_dfpl2.global_prototypes[k]), (
+            f"DFPL prototype for class {k} is non-deterministic"
+        )
+

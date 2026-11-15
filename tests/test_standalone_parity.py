@@ -12,6 +12,7 @@ from run_server import resolve_server_settings
 from run_simulation import run_federated_simulation
 from src.baselines import (
     DFedPGPClientTrainer,
+    DFPLClientTrainer,
     DittoClientTrainer,
     FedAvgClientTrainer,
     FedProxClientTrainer,
@@ -131,6 +132,18 @@ def test_create_trainer_from_config() -> None:
     assert trainer_dfedpgp.lr_head == pytest.approx(0.05)
     assert trainer_dfedpgp.head_epochs == 3
     assert trainer_dfedpgp.backbone_epochs == 2
+
+    # DFPL
+    cfg_dfpl = ClientConfig(algorithm="dfpl")
+    cfg_dfpl.dfpl.lambda_proto = 0.25
+    cfg_dfpl.dfpl.normalize_prototypes = True
+    cfg_dfpl.dfpl.loss_type = "cosine"
+    trainer_dfpl = create_trainer_from_config(cfg_dfpl)
+    assert isinstance(trainer_dfpl, DFPLClientTrainer)
+    assert trainer_dfpl.lambda_proto == pytest.approx(0.25)
+    assert trainer_dfpl.normalize_prototypes is True
+    assert trainer_dfpl.loss_type == "cosine"
+
 
 
 def test_standalone_config_algorithm_and_baseline_parity(tmp_path: Path) -> None:
