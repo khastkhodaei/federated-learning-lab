@@ -7,8 +7,14 @@ from src.baselines.dfpl.prototype import (
     prototypes_to_bytes,
     prototypes_to_tensor,
 )
+from src.baselines.dfpl.trainer import (
+    DFPLClientTrainer,
+    DFPLTrainer,
+)
 
 __all__ = [
+    "DFPLClientTrainer",
+    "DFPLTrainer",
     "aggregate_prototypes",
     "bytes_to_prototypes",
     "compute_local_prototypes",

@@ -1,7 +1,9 @@
+import pytest
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.baselines.dfpl import (
+    DFPLClientTrainer,
     aggregate_prototypes,
     bytes_to_prototypes,
     compute_local_prototypes,
@@ -9,6 +11,7 @@ from src.baselines.dfpl import (
     prototypes_to_tensor,
 )
 from src.models.cnn import SimpleCNN
+from src.utils.serialization import model_to_bytes
 
 
 def test_compute_local_prototypes_synthetic() -> None:
@@ -140,3 +143,200 @@ def test_prototypes_serialization_roundtrip() -> None:
     assert bytes_to_prototypes(b"") == {}
     # Empty dict returns empty bytes
     assert prototypes_to_bytes({}) == b""
+
+
+def test_dfpl_client_trainer_initialization() -> None:
+    trainer = DFPLClientTrainer()
+    assert trainer.lambda_proto == 0.1
+    assert trainer.normalize_prototypes is False
+    assert trainer.loss_type == "mse"
+    assert trainer.last_local_prototypes == {}
+    assert trainer.last_sample_counts == {}
+    assert trainer.last_prototypes_bytes == b""
+
+    with pytest.raises(ValueError, match="lambda_proto"):
+        DFPLClientTrainer(lambda_proto=-0.5)
+
+    with pytest.raises(ValueError, match="loss_type"):
+        DFPLClientTrainer(loss_type="invalid")
+
+
+def test_dfpl_client_trainer_train_without_prototypes() -> None:
+    model = SimpleCNN(in_channels=3, num_classes=10, seed=42)
+    images = torch.randn(8, 3, 32, 32)
+    labels = torch.tensor([0, 1, 0, 0, 1, 1, 0, 1], dtype=torch.long)
+    dataloader = DataLoader(TensorDataset(images, labels), batch_size=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    device = torch.device("cpu")
+
+    trainer = DFPLClientTrainer(lambda_proto=0.1)
+    weights, total_samples, metrics = trainer.train(
+        model, dataloader, epochs=1, criterion=criterion, optimizer=optimizer, device=device, global_prototypes=None
+    )
+
+    assert isinstance(weights, bytes)
+    assert len(weights) > 0
+    assert total_samples == 8
+    assert metrics["loss_proto"] == 0.0
+    assert metrics["loss_ce"] > 0.0
+    assert metrics["loss"] > 0.0
+
+    assert set(trainer.last_local_prototypes.keys()) == {0, 1}
+    for c in (0, 1):
+        assert trainer.last_local_prototypes[c].shape == (128,)
+
+    assert isinstance(trainer.last_prototypes_bytes, bytes)
+    assert len(trainer.last_prototypes_bytes) > 0
+    assert trainer.last_sample_counts == {0: 4, 1: 4}
+
+
+def test_dfpl_client_trainer_train_with_prototypes() -> None:
+    model = SimpleCNN(in_channels=3, num_classes=10, seed=42)
+    images = torch.randn(8, 3, 32, 32)
+    labels = torch.tensor([0, 1, 0, 0, 1, 1, 0, 1], dtype=torch.long)
+    dataloader = DataLoader(TensorDataset(images, labels), batch_size=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    device = torch.device("cpu")
+    initial_weights = model_to_bytes(model)
+
+    target_protos = {0: torch.randn(128), 1: torch.randn(128)}
+    trainer = DFPLClientTrainer(lambda_proto=0.5)
+
+    weights, total_samples, metrics = trainer.train(
+        model,
+        dataloader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        global_prototypes=target_protos,
+    )
+
+    assert metrics["loss_proto"] > 0.0
+    assert weights != initial_weights
+
+    # Passing serialized bytes
+    proto_bytes = prototypes_to_bytes(target_protos)
+    weights2, _, metrics2 = trainer.train(
+        model,
+        dataloader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        global_prototypes=proto_bytes,
+    )
+    assert metrics2["loss_proto"] > 0.0
+
+
+def test_dfpl_client_trainer_prototype_alignment_gradient() -> None:
+    model = SimpleCNN(in_channels=3, num_classes=10, seed=42)
+    images = torch.randn(4, 3, 32, 32)
+    labels = torch.tensor([0, 1, 0, 1], dtype=torch.long)
+    dataloader = DataLoader(TensorDataset(images, labels), batch_size=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    device = torch.device("cpu")
+    target_protos = {0: torch.randn(128), 1: torch.randn(128)}
+
+    trainer = DFPLClientTrainer(lambda_proto=1.0)
+    trainer.train(
+        model,
+        dataloader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        global_prototypes=target_protos,
+    )
+
+    assert model.conv1.weight.grad is not None
+    assert model.conv2.weight.grad is not None
+    assert model.fc1.weight.grad is not None
+    assert torch.count_nonzero(model.conv1.weight.grad) > 0
+    assert torch.count_nonzero(model.conv2.weight.grad) > 0
+    assert torch.count_nonzero(model.fc1.weight.grad) > 0
+
+
+def test_dfpl_client_trainer_missing_class_graceful() -> None:
+    model = SimpleCNN(in_channels=3, num_classes=10, seed=42)
+    images = torch.randn(8, 3, 32, 32)
+    labels = torch.tensor([0, 1, 0, 0, 1, 1, 0, 1], dtype=torch.long)
+    dataloader = DataLoader(TensorDataset(images, labels), batch_size=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    device = torch.device("cpu")
+
+    # Global prototypes only has class 9, but local dataloader only has 0 and 1
+    global_protos = {9: torch.randn(128)}
+
+    trainer = DFPLClientTrainer(lambda_proto=0.5)
+    _, total_samples, metrics = trainer.train(
+        model,
+        dataloader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        global_prototypes=global_protos,
+    )
+
+    assert total_samples == 8
+    assert metrics["loss_proto"] == 0.0
+    assert metrics["loss_ce"] > 0.0
+
+
+def test_dfpl_client_trainer_cosine_loss() -> None:
+    model = SimpleCNN(in_channels=3, num_classes=10, seed=42)
+    images = torch.randn(4, 3, 32, 32)
+    labels = torch.tensor([0, 1, 0, 1], dtype=torch.long)
+    dataloader = DataLoader(TensorDataset(images, labels), batch_size=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    device = torch.device("cpu")
+    target_protos = {0: torch.randn(128), 1: torch.randn(128)}
+
+    trainer = DFPLClientTrainer(loss_type="cosine", lambda_proto=0.5)
+    _, _, metrics = trainer.train(
+        model,
+        dataloader,
+        epochs=1,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        global_prototypes=target_protos,
+    )
+
+    assert metrics["loss_proto"] > 0.0
+    assert torch.isfinite(torch.tensor(metrics["loss_proto"]))
+
+
+def test_dfpl_client_trainer_zero_epochs() -> None:
+    model = SimpleCNN(in_channels=3, num_classes=10, seed=42)
+    images = torch.randn(4, 3, 32, 32)
+    labels = torch.tensor([0, 1, 0, 1], dtype=torch.long)
+    dataloader = DataLoader(TensorDataset(images, labels), batch_size=4)
+
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    device = torch.device("cpu")
+    initial_weights = model_to_bytes(model)
+
+    trainer = DFPLClientTrainer()
+    weights, total_samples, metrics = trainer.train(
+        model, dataloader, epochs=0, criterion=criterion, optimizer=optimizer, device=device
+    )
+
+    assert weights == initial_weights
+    assert total_samples == 0
+    assert metrics["loss"] == 0.0
+    assert metrics["loss_ce"] == 0.0
+    assert metrics["loss_proto"] == 0.0
+
