@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.baselines.dfpl import (
     DFPLClientTrainer,
+    DFPLServerStrategy,
     aggregate_prototypes,
     bytes_to_prototypes,
     compute_local_prototypes,
@@ -11,6 +12,7 @@ from src.baselines.dfpl import (
     prototypes_to_tensor,
 )
 from src.models.cnn import SimpleCNN
+from src.server.aggregation import fedavg_bytes
 from src.utils.serialization import model_to_bytes
 
 
@@ -339,4 +341,134 @@ def test_dfpl_client_trainer_zero_epochs() -> None:
     assert metrics["loss"] == 0.0
     assert metrics["loss_ce"] == 0.0
     assert metrics["loss_proto"] == 0.0
+
+
+def test_dfpl_server_strategy_initialization() -> None:
+    strategy = DFPLServerStrategy()
+    assert strategy.normalize_prototypes is False
+    assert strategy.aggregate_weights is True
+    assert strategy.global_prototypes == {}
+    assert strategy.global_prototypes_bytes == b""
+
+
+def test_dfpl_server_strategy_aggregate_empty_raises() -> None:
+    strategy = DFPLServerStrategy()
+    global_model = SimpleCNN(in_channels=3, num_classes=10)
+    with pytest.raises(ValueError, match="empty updates"):
+        strategy.aggregate(global_model, [], round_id=0)
+
+
+def test_dfpl_server_strategy_aggregate_weights_only() -> None:
+    m1 = SimpleCNN(in_channels=3, num_classes=10, seed=1)
+    m2 = SimpleCNN(in_channels=3, num_classes=10, seed=2)
+    global_model = SimpleCNN(in_channels=3, num_classes=10, seed=99)
+
+    u1 = (model_to_bytes(m1), 10)
+    u2 = (model_to_bytes(m2), 30)
+
+    strategy = DFPLServerStrategy()
+    aggregated_bytes = strategy.aggregate(global_model, [u1, u2], round_id=1)
+
+    expected_bytes = fedavg_bytes([u1, u2])
+    assert aggregated_bytes == expected_bytes
+    assert model_to_bytes(global_model) == expected_bytes
+
+
+def test_dfpl_server_strategy_aggregate_with_prototypes_dict() -> None:
+    m1 = SimpleCNN(in_channels=3, num_classes=10, seed=1)
+    m2 = SimpleCNN(in_channels=3, num_classes=10, seed=2)
+    global_model = SimpleCNN(in_channels=3, num_classes=10, seed=99)
+
+    p1 = {0: torch.randn(128), 1: torch.randn(128)}
+    c1 = {0: 10, 1: 5}
+    p2 = {0: torch.randn(128), 2: torch.randn(128)}
+    c2 = {0: 30, 2: 20}
+
+    u1 = (model_to_bytes(m1), 15)
+    u2 = (model_to_bytes(m2), 50)
+
+    strategy = DFPLServerStrategy()
+    strategy.aggregate(
+        global_model,
+        [u1, u2],
+        round_id=1,
+        client_prototypes=[p1, p2],
+        client_sample_counts=[c1, c2],
+    )
+
+    assert set(strategy.global_prototypes.keys()) == {0, 1, 2}
+    expected_0 = (10 * p1[0] + 30 * p2[0]) / 40.0
+    assert torch.allclose(strategy.global_prototypes[0], expected_0, atol=1e-6)
+    assert torch.allclose(strategy.global_prototypes[1], p1[1], atol=1e-6)
+    assert torch.allclose(strategy.global_prototypes[2], p2[2], atol=1e-6)
+
+    assert len(strategy.global_prototypes_bytes) > 0
+    restored = bytes_to_prototypes(strategy.global_prototypes_bytes)
+    assert set(restored.keys()) == {0, 1, 2}
+    for k in strategy.global_prototypes:
+        assert torch.allclose(restored[k], strategy.global_prototypes[k], atol=1e-6)
+
+
+def test_dfpl_server_strategy_aggregate_with_prototypes_bytes() -> None:
+    m1 = SimpleCNN(in_channels=3, num_classes=10, seed=1)
+    m2 = SimpleCNN(in_channels=3, num_classes=10, seed=2)
+    global_model = SimpleCNN(in_channels=3, num_classes=10, seed=99)
+
+    p1 = {0: torch.randn(128), 1: torch.randn(128)}
+    c1 = {0: 10, 1: 5}
+    p2 = {0: torch.randn(128), 2: torch.randn(128)}
+    c2 = {0: 30, 2: 20}
+
+    u1 = (model_to_bytes(m1), 15)
+    u2 = (model_to_bytes(m2), 50)
+
+    strategy = DFPLServerStrategy()
+    strategy.aggregate(
+        global_model,
+        [u1, u2],
+        round_id=1,
+        client_prototypes=[prototypes_to_bytes(p1), prototypes_to_bytes(p2)],
+        client_sample_counts=[c1, c2],
+    )
+
+    expected_0 = (10 * p1[0] + 30 * p2[0]) / 40.0
+    assert torch.allclose(strategy.global_prototypes[0], expected_0, atol=1e-6)
+    assert torch.allclose(strategy.global_prototypes[1], p1[1], atol=1e-6)
+    assert torch.allclose(strategy.global_prototypes[2], p2[2], atol=1e-6)
+
+
+def test_dfpl_server_strategy_get_client_payload() -> None:
+    strategy = DFPLServerStrategy()
+    p1 = {0: torch.randn(128)}
+    m1 = SimpleCNN(in_channels=3, num_classes=10, seed=1)
+    strategy.aggregate(
+        None,
+        [(model_to_bytes(m1), 10)],
+        round_id=1,
+        client_prototypes=[p1],
+    )
+
+    payload = strategy.get_client_payload()
+    assert payload == strategy.global_prototypes_bytes
+    assert strategy.get_client_payload("client_1") == strategy.global_prototypes_bytes
+    assert strategy.get_global_prototypes() == strategy.global_prototypes
+    assert strategy.get_global_prototypes_bytes() == strategy.global_prototypes_bytes
+
+
+def test_dfpl_server_strategy_normalization() -> None:
+    strategy = DFPLServerStrategy(normalize_prototypes=True)
+    p1 = {0: torch.randn(128) * 10, 1: torch.randn(128) * 5}
+    m1 = SimpleCNN(in_channels=3, num_classes=10, seed=1)
+
+    strategy.aggregate(
+        None,
+        [(model_to_bytes(m1), 10)],
+        round_id=1,
+        client_prototypes=[p1],
+    )
+
+    for proto in strategy.global_prototypes.values():
+        norm = torch.norm(proto, p=2)
+        assert torch.allclose(norm, torch.tensor(1.0), atol=1e-5)
+
 

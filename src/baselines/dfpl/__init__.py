@@ -7,6 +7,10 @@ from src.baselines.dfpl.prototype import (
     prototypes_to_bytes,
     prototypes_to_tensor,
 )
+from src.baselines.dfpl.strategy import (
+    DFPLServerStrategy,
+    DFPLStrategy,
+)
 from src.baselines.dfpl.trainer import (
     DFPLClientTrainer,
     DFPLTrainer,
@@ -14,6 +18,8 @@ from src.baselines.dfpl.trainer import (
 
 __all__ = [
     "DFPLClientTrainer",
+    "DFPLServerStrategy",
+    "DFPLStrategy",
     "DFPLTrainer",
     "aggregate_prototypes",
     "bytes_to_prototypes",
