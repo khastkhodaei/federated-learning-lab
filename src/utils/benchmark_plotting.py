@@ -9,6 +9,7 @@ Per-FedAvg, pFedGraph, DFedPGP) and produces publication-quality multi-algorithm
 
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -273,12 +274,18 @@ def plot_benchmark_summary(
     global_plot = plot_global_accuracy_comparison(
         benchmark_data, target_out / "global_accuracy_comparison.png"
     )
+    benchmark_global = target_out / "benchmark_global_accuracy.png"
+    shutil.copyfile(global_plot, benchmark_global)
+
     local_plot = plot_local_accuracy_comparison(
         benchmark_data, target_out / "local_accuracy_comparison.png"
     )
+    benchmark_personalized = target_out / "benchmark_personalized_accuracy.png"
+    shutil.copyfile(local_plot, benchmark_personalized)
 
     # 3. Two-panel combined comparison figure
     combined_plot = target_out / "benchmark_summary.png"
+    overview_plot = target_out / "benchmark_overview.png"
     fig, (ax_g, ax_l) = plt.subplots(1, 2, figsize=(15.0, 5.2), dpi=180)
 
     for algo, data in benchmark_data.items():
@@ -325,10 +332,37 @@ def plot_benchmark_summary(
     )
     plt.tight_layout()
     plt.savefig(combined_plot, bbox_inches="tight")
+    plt.savefig(overview_plot, bbox_inches="tight")
     plt.close(fig)
+
+    # 4. Summary telemetry json
+    summary_data: dict[str, Any] = {}
+    for algo, data in benchmark_data.items():
+        rounds_data = data.get("rounds", [])
+        if not rounds_data:
+            continue
+        g_accs = [float(r.get("global_test_accuracy", 0.0)) * 100.0 for r in rounds_data]
+        l_accs = [float(r.get("mean_local_test_accuracy", 0.0)) * 100.0 for r in rounds_data]
+        losses = [float(r.get("weighted_loss", 0.0)) for r in rounds_data]
+        summary_data[algo] = {
+            "max_global_accuracy": max(g_accs) if g_accs else 0.0,
+            "final_global_accuracy": g_accs[-1] if g_accs else 0.0,
+            "max_local_accuracy": max(l_accs) if l_accs else 0.0,
+            "final_local_accuracy": l_accs[-1] if l_accs else 0.0,
+            "final_loss": losses[-1] if losses else 0.0,
+            "rounds_completed": len(rounds_data),
+        }
+
+    summary_file = target_out / "benchmark_summary.json"
+    with open(summary_file, "w", encoding="utf-8") as f:
+        json.dump(summary_data, f, indent=2)
 
     return {
         "global_accuracy_comparison": global_plot,
         "local_accuracy_comparison": local_plot,
         "benchmark_summary": str(combined_plot),
+        "benchmark_global_accuracy": str(benchmark_global),
+        "benchmark_personalized_accuracy": str(benchmark_personalized),
+        "benchmark_overview": str(overview_plot),
+        "benchmark_summary_json": str(summary_file),
     }

@@ -308,8 +308,11 @@ def run_federated_simulation(
                 "num_responses": len(successful),
                 "total_samples": total_samples,
                 "avg_client_loss": round(avg_client_loss, 4),
+                "round_loss": round(avg_client_loss, 4),
                 "global_accuracy": round(global_acc * 100, 2),
+                "global_acc": round(global_acc * 100, 2),
                 "mean_local_accuracy": round(mean_local_acc * 100, 2),
+                "mean_local_acc": round(mean_local_acc * 100, 2),
                 "client_accuracies": [round(a * 100, 2) for a in client_accs],
             }
 
