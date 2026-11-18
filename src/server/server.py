@@ -190,24 +190,47 @@ class FederatedServer:
         Returns:
             Serialized aggregated parameter bytes, or None if no valid updates.
         """
-        valid_updates = [
-            (r.weights, r.num_samples)
-            for r in responses
-            if r.success and r.weights
-        ]
+        expected_bytes = len(self.get_global_weights()) if self.global_model is not None else None
+
+        valid_updates: list[tuple[bytes, int]] = []
+        client_ids: list[str] = []
+        valid_responses: list[TrainResponse] = []
+
+        for r in responses:
+            if not r.success or not r.weights:
+                continue
+            if len(r.weights) % 4 != 0:
+                logger.warning(
+                    "Discarding unaligned corrupted payload from node %s (%d bytes).",
+                    r.node_id,
+                    len(r.weights),
+                )
+                continue
+            if expected_bytes is not None and expected_bytes > 0 and len(r.weights) != expected_bytes:
+                logger.warning(
+                    "Discarding corrupted payload from node %s: expected %d bytes, got %d.",
+                    r.node_id,
+                    expected_bytes,
+                    len(r.weights),
+                )
+                continue
+
+            valid_updates.append((r.weights, r.num_samples))
+            client_ids.append(r.node_id)
+            valid_responses.append(r)
+
         if not valid_updates:
             logger.warning(
                 "No successful client updates with weights to aggregate."
             )
             return None
 
-        client_ids = [r.node_id for r in responses if r.success and r.weights]
         aggregated_bytes = self.strategy.aggregate(
             global_model=self.global_model,
             client_updates=valid_updates,
             round_id=round_id,
             client_ids=client_ids,
-            responses=responses,
+            responses=valid_responses,
         )
 
         # Retain client-specific models if strategy generates them
