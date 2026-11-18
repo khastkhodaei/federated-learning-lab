@@ -16,6 +16,9 @@ def fedavg_vectors(updates: Sequence[Tuple[torch.Tensor, int]]) -> torch.Tensor:
     if not updates:
         raise ValueError("Cannot aggregate empty updates.")
 
+    if any(num_samples < 0 for _, num_samples in updates):
+        raise ValueError("Client sample counts must be non-negative.")
+
     total_samples = sum(num_samples for _, num_samples in updates)
 
     if total_samples == 0:

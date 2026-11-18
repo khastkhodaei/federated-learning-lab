@@ -101,32 +101,35 @@ def aggregate_prototypes(
     aggregated: dict[int, torch.Tensor] = {}
 
     for c in all_classes:
-        matching_clients: list[int] = [
-            i for i, p_dict in enumerate(client_prototypes) if c in p_dict
-        ]
-        if not matching_clients:
+        finite_entries: list[tuple[int, torch.Tensor]] = []
+        for i, p_dict in enumerate(client_prototypes):
+            if c not in p_dict:
+                continue
+            proto = p_dict[c].detach().cpu().to(torch.float32)
+            if bool(torch.isfinite(proto).all().item()):
+                finite_entries.append((i, proto))
+        if not finite_entries:
             continue
 
         if client_sample_counts is not None and len(client_sample_counts) == len(client_prototypes):
             weights = [
-                float(client_sample_counts[i].get(c, 0)) for i in matching_clients
+                max(0.0, float(client_sample_counts[i].get(c, 0)))
+                for i, _ in finite_entries
             ]
             total_weight = sum(weights)
             if total_weight > 0:
                 proto_c = sum(
-                    w * client_prototypes[i][c].detach().cpu().to(torch.float32)
-                    for w, i in zip(weights, matching_clients)
+                    w * proto
+                    for w, (_, proto) in zip(weights, finite_entries)
                 ) / total_weight
             else:
                 proto_c = sum(
-                    client_prototypes[i][c].detach().cpu().to(torch.float32)
-                    for i in matching_clients
-                ) / float(len(matching_clients))
+                    proto for _, proto in finite_entries
+                ) / float(len(finite_entries))
         else:
             proto_c = sum(
-                client_prototypes[i][c].detach().cpu().to(torch.float32)
-                for i in matching_clients
-            ) / float(len(matching_clients))
+                proto for _, proto in finite_entries
+            ) / float(len(finite_entries))
 
         if normalize:
             norm = torch.norm(proto_c, p=2)

@@ -7,6 +7,7 @@ from concurrent import futures
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import grpc
+import torch
 from torch import nn
 
 from src.baselines.base import ServerStrategy
@@ -16,7 +17,11 @@ from src.transport.federated_pb2_grpc import (
     NodeServiceStub,
     add_FederatedServiceServicer_to_server,
 )
-from src.utils.serialization import load_bytes_into_model, model_to_bytes
+from src.utils.serialization import (
+    bytes_to_vector,
+    load_bytes_into_model,
+    model_to_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +202,13 @@ class FederatedServer:
         for r in responses:
             if not r.success or not r.weights:
                 continue
+            if r.num_samples < 0:
+                logger.warning(
+                    "Discarding response from node %s: invalid negative sample count (%d).",
+                    r.node_id,
+                    r.num_samples,
+                )
+                continue
             if len(r.weights) % 4 != 0:
                 logger.warning(
                     "Discarding unaligned corrupted payload from node %s (%d bytes).",
@@ -210,6 +222,12 @@ class FederatedServer:
                     r.node_id,
                     expected_bytes,
                     len(r.weights),
+                )
+                continue
+            if not bool(torch.isfinite(bytes_to_vector(r.weights)).all().item()):
+                logger.warning(
+                    "Discarding non-finite (NaN/Inf) weight payload from node %s.",
+                    r.node_id,
                 )
                 continue
 
