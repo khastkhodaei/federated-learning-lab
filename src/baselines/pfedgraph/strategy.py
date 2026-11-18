@@ -160,11 +160,15 @@ class PFedGraphServerStrategy(ServerStrategy):
                 zip(client_ids, client_updates, strict=True),
                 key=lambda x: str(x[0]),
             )
-            self.client_ids = [str(p[0]) for p in paired]
+            sorted_client_ids = [str(p[0]) for p in paired]
             effective_updates = [p[1] for p in paired]
         else:
-            self.client_ids = [f"client_{i}" for i in range(k)]
+            sorted_client_ids = [f"client_{i}" for i in range(k)]
             effective_updates = list(client_updates)
+
+        if sorted_client_ids != self.client_ids:
+            self.adjacency_matrix = None
+        self.client_ids = sorted_client_ids
 
         # 1. Unpack client updates to flattened parameter vectors
         vectors: list[torch.Tensor] = []

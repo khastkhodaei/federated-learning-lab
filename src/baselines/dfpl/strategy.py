@@ -49,6 +49,7 @@ class DFPLServerStrategy(ServerStrategy):
             Sequence[Union[dict[int, torch.Tensor], bytes]]
         ] = None,
         client_sample_counts: Optional[Sequence[dict[int, int]]] = None,
+        client_ids: Optional[Sequence[str]] = None,
         **kwargs: Any,
     ) -> bytes:
         """Aggregates client model weights and class prototype embeddings.
@@ -59,6 +60,7 @@ class DFPLServerStrategy(ServerStrategy):
             round_id: Current federated communication round number.
             client_prototypes: Sequence of client prototype dictionaries or serialized bytes.
             client_sample_counts: Optional sequence of class-wise sample count dictionaries.
+            client_ids: Optional client identifiers aligned with client_updates for deterministic ordering.
             **kwargs: Additional baseline-specific arguments.
 
         Returns:
@@ -70,17 +72,36 @@ class DFPLServerStrategy(ServerStrategy):
         if not client_updates:
             raise ValueError("Cannot aggregate empty updates.")
 
-        if self.aggregate_weights:
-            aggregated_bytes = fedavg_bytes(client_updates)
+        k = len(client_updates)
+        if client_ids is not None and len(client_ids) == k:
+            order = sorted(range(k), key=lambda i: str(client_ids[i]))
+            ordered_updates = [client_updates[i] for i in order]
+            ordered_prototypes = (
+                [client_prototypes[i] for i in order]
+                if client_prototypes is not None and len(client_prototypes) == k
+                else client_prototypes
+            )
+            ordered_counts = (
+                [client_sample_counts[i] for i in order]
+                if client_sample_counts is not None and len(client_sample_counts) == k
+                else client_sample_counts
+            )
         else:
-            aggregated_bytes = client_updates[0][0]
+            ordered_updates = list(client_updates)
+            ordered_prototypes = client_prototypes
+            ordered_counts = client_sample_counts
+
+        if self.aggregate_weights:
+            aggregated_bytes = fedavg_bytes(ordered_updates)
+        else:
+            aggregated_bytes = ordered_updates[0][0]
 
         if global_model is not None:
             load_bytes_into_model(aggregated_bytes, global_model)
 
-        if client_prototypes is not None:
+        if ordered_prototypes is not None:
             deserialized_protos: list[dict[int, torch.Tensor]] = []
-            for p in client_prototypes:
+            for p in ordered_prototypes:
                 if isinstance(p, bytes):
                     deserialized_protos.append(bytes_to_prototypes(p))
                 elif isinstance(p, dict):
@@ -89,8 +110,8 @@ class DFPLServerStrategy(ServerStrategy):
                     raise TypeError(f"Unsupported prototype format: {type(p)}")
 
             parsed_counts = (
-                list(client_sample_counts)
-                if client_sample_counts is not None
+                list(ordered_counts)
+                if ordered_counts is not None
                 else None
             )
             aggregated_protos = aggregate_prototypes(

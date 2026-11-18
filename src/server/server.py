@@ -192,8 +192,6 @@ class FederatedServer:
         """
         expected_bytes = len(self.get_global_weights()) if self.global_model is not None else None
 
-        valid_updates: list[tuple[bytes, int]] = []
-        client_ids: list[str] = []
         valid_responses: list[TrainResponse] = []
 
         for r in responses:
@@ -215,15 +213,18 @@ class FederatedServer:
                 )
                 continue
 
-            valid_updates.append((r.weights, r.num_samples))
-            client_ids.append(r.node_id)
             valid_responses.append(r)
 
-        if not valid_updates:
+        if not valid_responses:
             logger.warning(
                 "No successful client updates with weights to aggregate."
             )
             return None
+
+        # Sort deterministically by node_id so async completion order never perturbs aggregation
+        valid_responses.sort(key=lambda r: str(r.node_id))
+        valid_updates = [(r.weights, r.num_samples) for r in valid_responses]
+        client_ids = [r.node_id for r in valid_responses]
 
         aggregated_bytes = self.strategy.aggregate(
             global_model=self.global_model,
