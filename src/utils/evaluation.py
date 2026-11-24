@@ -4,6 +4,8 @@ Provides baseline-agnostic evaluation routines for calculating loss,
 top-1 accuracy, and sample counts on centralized or client test sets.
 """
 
+from collections.abc import Sequence
+import logging
 from typing import Any
 
 import numpy as np
@@ -13,6 +15,8 @@ from torch.utils.data import DataLoader
 from torchvision import datasets
 
 from src.datasets.transforms import get_default_transform
+
+logger = logging.getLogger(__name__)
 
 
 def parse_client_metrics(message: str) -> dict[str, float]:
@@ -40,6 +44,71 @@ def parse_client_metrics(message: str) -> dict[str, float]:
         except ValueError:
             pass
     return metrics
+
+
+def aggregate_client_round_metrics(
+    responses: Sequence[Any],
+    round_id: int | None = None,
+) -> dict[str, Any]:
+    """Aggregates parsed client metrics across successful responses without zero-imputation.
+
+    Excludes clients omitting expected keys ('loss', 'test_acc') from mean denominators
+    and logs an explicit warning when any successful response lacks expected metric keys.
+    """
+    client_losses: list[float] = []
+    client_accs: list[float] = []
+    client_metrics: dict[str, dict[str, Any]] = {}
+    weighted_loss_sum = 0.0
+    loss_samples = 0
+
+    for res in responses:
+        if not getattr(res, "success", True):
+            continue
+
+        node_id = str(getattr(res, "node_id", "unknown"))
+        num_samples = int(getattr(res, "num_samples", 0))
+        message = str(getattr(res, "message", ""))
+        parsed = parse_client_metrics(message)
+
+        missing_keys = [k for k in ("loss", "test_acc") if k not in parsed]
+        if missing_keys:
+            round_label = f" (round {round_id})" if round_id is not None else ""
+            logger.warning(
+                "Client '%s'%s missing expected metric keys: %s; excluding from mean calculations.",
+                node_id,
+                round_label,
+                ", ".join(missing_keys),
+            )
+
+        entry: dict[str, Any] = {"samples": num_samples}
+        if "loss" in parsed:
+            c_loss = parsed["loss"]
+            client_losses.append(c_loss)
+            entry["loss"] = round(c_loss, 4)
+            if num_samples > 0:
+                weighted_loss_sum += c_loss * num_samples
+                loss_samples += num_samples
+        if "test_acc" in parsed:
+            c_acc = parsed["test_acc"]
+            client_accs.append(c_acc)
+            entry["test_accuracy"] = round(c_acc, 4)
+        if "test_loss" in parsed:
+            entry["test_loss"] = round(parsed["test_loss"], 4)
+
+        client_metrics[node_id] = entry
+
+    mean_loss = (sum(client_losses) / len(client_losses)) if client_losses else None
+    weighted_loss = (weighted_loss_sum / loss_samples) if loss_samples > 0 else mean_loss
+    mean_local_acc = (sum(client_accs) / len(client_accs)) if client_accs else None
+
+    return {
+        "client_losses": client_losses,
+        "client_accs": client_accs,
+        "client_metrics": client_metrics,
+        "mean_loss": mean_loss,
+        "weighted_loss": weighted_loss,
+        "mean_local_acc": mean_local_acc,
+    }
 
 
 def compute_fairness_metrics(client_accuracies: list[float]) -> dict[str, float]:
@@ -100,29 +169,33 @@ def evaluate_model(
     if criterion is None:
         criterion = nn.CrossEntropyLoss(reduction="sum")
 
+    was_training = model.training
     model.eval()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    with torch.no_grad():
-        for batch in dataloader:
-            if not isinstance(batch, (list, tuple)) or len(batch) < 2:
-                continue
+    try:
+        with torch.no_grad():
+            for batch in dataloader:
+                if not isinstance(batch, (list, tuple)) or len(batch) < 2:
+                    continue
 
-            inputs, targets = batch[0], batch[1]
-            inputs = inputs.to(device)
-            targets = targets.to(device)
+                inputs, targets = batch[0], batch[1]
+                inputs = inputs.to(device)
+                targets = targets.to(device)
 
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
 
-            batch_size = targets.size(0)
-            total += batch_size
-            total_loss += float(loss.item())
+                batch_size = targets.size(0)
+                total += batch_size
+                total_loss += float(loss.item())
 
-            _, preds = torch.max(outputs, 1)
-            correct += int((preds == targets).sum().item())
+                _, preds = torch.max(outputs, 1)
+                correct += int((preds == targets).sum().item())
+    finally:
+        model.train(was_training)
 
     avg_loss = (total_loss / total) if total > 0 else 0.0
     acc = (correct / total) if total > 0 else 0.0

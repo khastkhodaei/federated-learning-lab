@@ -9,6 +9,7 @@ import copy
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.baselines.dfedpgp.strategy import _push_sum_step
@@ -615,3 +616,93 @@ def test_ditto_regularization_monotonicity() -> None:
             f"Distance not strictly decreasing: lambda={lambda_values[i]} ({distance_values[i]}) "
             f"<= lambda={lambda_values[i+1]} ({distance_values[i+1]})"
         )
+
+
+def test_dfpl_shuffled_label_alignment_control() -> None:
+    """Verifies normalized MSE DFPL aligns features closer to true prototypes than shuffled labels."""
+    torch.manual_seed(42)
+    # Create separable 2-class data with feature norms much larger than 1.0
+    x_pos = torch.randn(16, 4) + 3.0
+    x_neg = torch.randn(16, 4) - 3.0
+    x = torch.cat([x_pos, x_neg], dim=0)
+    y = torch.cat([torch.zeros(16, dtype=torch.long), torch.ones(16, dtype=torch.long)], dim=0)
+    y_shuffled = 1 - y  # Deterministic derangement swapping every label
+
+    dataset = TensorDataset(x, y)
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+
+    model = FeatureEmbeddingModel(in_features=4, hidden_dim=8, num_classes=2)
+    with torch.no_grad():
+        model.backbone.weight.mul_(3.0)  # Ensure raw feature norm >> 1.0
+
+    # Unit-norm target class prototypes
+    p0 = F.normalize(torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), p=2, dim=0)
+    p1 = F.normalize(torch.tensor([-1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), p=2, dim=0)
+    prototypes = {0: p0, 1: p1}
+
+    trainer = DFPLClientTrainer(
+        lambda_proto=2.0,
+        normalize_prototypes=True,
+        loss_type="mse",
+    )
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    trainer.train(
+        model=model,
+        dataloader=loader,
+        epochs=25,
+        criterion=nn.CrossEntropyLoss(),
+        optimizer=optimizer,
+        device=torch.device("cpu"),
+        global_prototypes=prototypes,
+    )
+
+    model.eval()
+    with torch.no_grad():
+        _, feats = model(x, return_features=True)
+        norm_feats = F.normalize(feats, p=2, dim=-1)
+        raw_norms = torch.norm(feats, p=2, dim=-1).mean().item()
+        true_targets = torch.stack([prototypes[int(lbl.item())] for lbl in y], dim=0)
+        shuffled_targets = torch.stack([prototypes[int(lbl.item())] for lbl in y_shuffled], dim=0)
+
+        dist_true = float(((norm_feats - true_targets) ** 2).sum(dim=-1).mean().item())
+        dist_shuffled = float(((norm_feats - shuffled_targets) ** 2).sum(dim=-1).mean().item())
+
+    # Normalized features must align tightly with true prototypes compared to shuffled-label control
+    assert dist_true < dist_shuffled
+    assert dist_true < 0.25
+    # With L2 normalization inside MSE loss, raw feature norms do not collapse toward 1.0
+    assert raw_norms > 2.0
+
+
+def test_ditto_syncs_personalized_optimizer_lr_across_rounds() -> None:
+    """Verifies DittoClientTrainer propagates updated round LR into personalized_optimizer."""
+    torch.manual_seed(42)
+    x = torch.randn(16, 4)
+    y = torch.randint(0, 2, (16,))
+    loader = DataLoader(TensorDataset(x, y), batch_size=8, shuffle=False)
+
+    model = nn.Linear(4, 2)
+    trainer = DittoClientTrainer(lambda_penalty=0.1, personalized_epochs=1)
+
+    opt_round1 = torch.optim.SGD(model.parameters(), lr=0.1)
+    trainer.train(
+        model=model,
+        dataloader=loader,
+        epochs=1,
+        criterion=nn.CrossEntropyLoss(),
+        optimizer=opt_round1,
+        device=torch.device("cpu"),
+    )
+    assert trainer.personalized_optimizer is not None
+    assert trainer.personalized_optimizer.param_groups[0]["lr"] == 0.1
+
+    opt_round2 = torch.optim.SGD(model.parameters(), lr=0.005)
+    trainer.train(
+        model=model,
+        dataloader=loader,
+        epochs=1,
+        criterion=nn.CrossEntropyLoss(),
+        optimizer=opt_round2,
+        device=torch.device("cpu"),
+    )
+    assert trainer.personalized_optimizer.param_groups[0]["lr"] == 0.005

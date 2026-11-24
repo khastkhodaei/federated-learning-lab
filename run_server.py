@@ -20,10 +20,10 @@ from src.models.cnn import SimpleCNN
 from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
 from src.utils.evaluation import (
+    aggregate_client_round_metrics,
     compute_fairness_metrics,
     evaluate_model,
     get_global_test_loader,
-    parse_client_metrics,
 )
 from src.utils.hardware import get_hardware_summary, resolve_device
 from src.utils.reporting import save_baseline_report
@@ -334,40 +334,29 @@ def main() -> None:
             successful = [res for res in responses if res.success]
             total_samples = sum(res.num_samples for res in successful)
 
-            client_metrics = {}
-            client_test_accs = []
-            weighted_loss_sum = 0.0
-            loss_samples = 0
+            agg_metrics = aggregate_client_round_metrics(successful, round_id=r)
+            client_metrics = agg_metrics["client_metrics"]
+            client_test_accs = agg_metrics["client_accs"]
 
-            for res in successful:
-                parsed = parse_client_metrics(res.message)
-                c_loss = parsed.get("loss", 0.0)
-                c_acc = parsed.get("test_acc", 0.0)
-                c_test_loss = parsed.get("test_loss", 0.0)
-
-                client_metrics[res.node_id] = {
-                    "samples": res.num_samples,
-                    "loss": round(c_loss, 4),
-                    "test_accuracy": round(c_acc, 4),
-                    "test_loss": round(c_test_loss, 4),
-                }
-                if "test_acc" in parsed:
-                    client_test_accs.append(c_acc)
-
-                if c_loss > 0:
-                    weighted_loss_sum += c_loss * res.num_samples
-                    loss_samples += res.num_samples
-
+            for node_id, entry in client_metrics.items():
+                loss_str = f"{entry['loss']:.4f}" if "loss" in entry else "N/A"
+                acc_str = (
+                    f"{entry['test_accuracy'] * 100:.2f}%"
+                    if "test_accuracy" in entry
+                    else "N/A"
+                )
                 logger.info(
-                    "  [Update Received] Client '%s' submitted %d samples (loss: %.4f, test acc: %.2f%%)",
-                    res.node_id,
-                    res.num_samples,
-                    c_loss,
-                    c_acc * 100,
+                    "  [Update Received] Client '%s' submitted %d samples (loss: %s, test acc: %s)",
+                    node_id,
+                    entry["samples"],
+                    loss_str,
+                    acc_str,
                 )
 
             round_loss = (
-                (weighted_loss_sum / loss_samples) if loss_samples > 0 else 0.0
+                float(agg_metrics["weighted_loss"])
+                if agg_metrics["weighted_loss"] is not None
+                else 0.0
             )
 
             # Evaluate aggregated global model on held-out global test set

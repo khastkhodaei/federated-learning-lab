@@ -171,7 +171,12 @@ class DFPLClientTrainer(ClientTrainer):
                             cos_sim = F.cosine_similarity(batch_z, batch_p, dim=-1)
                             loss_proto = (1.0 - cos_sim).mean()
                         else:  # "mse"
-                            loss_proto = ((batch_z - batch_p) ** 2).sum(dim=-1).mean()
+                            aligned_z = (
+                                F.normalize(batch_z, p=2, dim=-1)
+                                if self.normalize_prototypes
+                                else batch_z
+                            )
+                            loss_proto = ((aligned_z - batch_p) ** 2).sum(dim=-1).mean()
 
                 loss_total = loss_ce + effective_lambda * loss_proto
                 loss_total.backward()

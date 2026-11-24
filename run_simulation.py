@@ -31,9 +31,9 @@ from src.server.dispatch import dispatch_round
 from src.server.server import FederatedServer
 from src.utils.config import load_unified_config
 from src.utils.evaluation import (
+    aggregate_client_round_metrics,
     evaluate_model,
     get_global_test_loader,
-    parse_client_metrics,
 )
 from src.utils.hardware import resolve_device
 from src.utils.serialization import model_to_bytes
@@ -265,17 +265,19 @@ def run_federated_simulation(
             successful = [res for res in responses if res.success]
             total_samples = sum(res.num_samples for res in successful)
 
-            client_losses = []
-            client_accs = []
-            for res in successful:
-                parsed = parse_client_metrics(res.message)
-                if "loss" in parsed:
-                    client_losses.append(parsed["loss"])
-                if "test_acc" in parsed:
-                    client_accs.append(parsed["test_acc"])
+            agg_metrics = aggregate_client_round_metrics(successful, round_id=r)
+            client_accs = agg_metrics["client_accs"]
 
-            avg_client_loss = (sum(client_losses) / len(client_losses)) if client_losses else 0.0
-            mean_local_acc = (sum(client_accs) / len(client_accs)) if client_accs else 0.0
+            avg_client_loss = (
+                float(agg_metrics["mean_loss"])
+                if agg_metrics["mean_loss"] is not None
+                else 0.0
+            )
+            mean_local_acc = (
+                float(agg_metrics["mean_local_acc"])
+                if agg_metrics["mean_local_acc"] is not None
+                else 0.0
+            )
 
             global_acc = 0.0
             if global_test_loader is not None and server.global_model is not None:

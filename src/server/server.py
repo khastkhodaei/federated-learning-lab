@@ -198,6 +198,7 @@ class FederatedServer:
         expected_bytes = len(self.get_global_weights()) if self.global_model is not None else None
 
         valid_responses: list[TrainResponse] = []
+        seen_node_ids: set[str] = set()
 
         for r in responses:
             if not r.success or not r.weights:
@@ -231,6 +232,15 @@ class FederatedServer:
                 )
                 continue
 
+            node_key = str(r.node_id)
+            if node_key in seen_node_ids:
+                logger.warning(
+                    "Discarding duplicate response from node %s in round %d.",
+                    r.node_id,
+                    round_id,
+                )
+                continue
+            seen_node_ids.add(node_key)
             valid_responses.append(r)
 
         if not valid_responses:

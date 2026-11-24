@@ -198,3 +198,37 @@ def test_all_stateful_strategies_immune_to_nan_payload_via_server(algorithm: str
         assert not torch.allclose(updated_vec, initial_vec)
     finally:
         server.stop(grace=0)
+
+
+def test_server_deduplicates_duplicate_node_ids_in_aggregate_responses(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verifies aggregate_responses keeps only the first valid response per node_id."""
+    server = FederatedServer(
+        host="127.0.0.1",
+        port=0,
+        model=SimpleCNN(seed=42),
+        strategy=FedAvgServerStrategy(),
+    )
+    try:
+        w0 = model_to_bytes(SimpleCNN(seed=10))
+        w0_dup = model_to_bytes(SimpleCNN(seed=99))
+        w1 = model_to_bytes(SimpleCNN(seed=20))
+
+        # client_0 submits twice with equal sample counts to client_1;
+        # expected aggregate must be exact 50/50 average of w0 and w1.
+        responses = [
+            TrainResponse(node_id="client_0", success=True, weights=w0, num_samples=10),
+            TrainResponse(node_id="client_0", success=True, weights=w0_dup, num_samples=50),
+            TrainResponse(node_id="client_1", success=True, weights=w1, num_samples=10),
+        ]
+
+        with caplog.at_level("WARNING"):
+            result = server.aggregate_responses(responses, round_id=1)
+
+        assert result is not None
+        expected_vec = 0.5 * (bytes_to_vector(w0) + bytes_to_vector(w1))
+        assert torch.allclose(bytes_to_vector(result), expected_vec, atol=1e-6)
+        assert any("duplicate" in rec.message.lower() and "client_0" in rec.message for rec in caplog.records)
+    finally:
+        server.stop(grace=0)

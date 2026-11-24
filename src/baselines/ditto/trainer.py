@@ -67,6 +67,11 @@ class DittoClientTrainer(ClientTrainer):
             )
         else:
             self.personalized_model.to(device)
+            if self.personalized_optimizer is not None and optimizer.param_groups:
+                current_lr = optimizer.param_groups[0].get("lr")
+                if current_lr is not None:
+                    for group in self.personalized_optimizer.param_groups:
+                        group["lr"] = current_lr
 
         # 2. Phase 1: Train global model w on private data (Standard FedAvg SGD)
         model.train()
