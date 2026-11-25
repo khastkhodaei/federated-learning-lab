@@ -14,6 +14,7 @@ from typing import Any
 import torch
 from torch import nn
 from torch.optim import Optimizer
+from torch.utils.data import DataLoader, RandomSampler
 
 from src.baselines.base import ClientTrainer
 from src.utils.serialization import model_to_bytes
@@ -26,11 +27,32 @@ class DittoClientTrainer(ClientTrainer):
         self,
         lambda_penalty: float = 0.1,
         personalized_epochs: int = 1,
+        seed: int = 42,
     ) -> None:
         self.lambda_penalty = float(lambda_penalty)
         self.personalized_epochs = int(personalized_epochs)
         self.personalized_model: nn.Module | None = None
         self.personalized_optimizer: Optimizer | None = None
+        self._pers_generator = torch.Generator().manual_seed(int(seed))
+
+    def _get_phase2_dataloader(self, dataloader: Iterable[Any]) -> Iterable[Any]:
+        """Returns an isolated Phase 2 dataloader so personal steps never perturb Phase 1 or global RNG."""
+        if (
+            isinstance(dataloader, DataLoader)
+            and dataloader.batch_size is not None
+            and isinstance(getattr(dataloader, "sampler", None), RandomSampler)
+        ):
+            return DataLoader(
+                dataloader.dataset,
+                batch_size=dataloader.batch_size,
+                shuffle=True,
+                drop_last=dataloader.drop_last,
+                num_workers=dataloader.num_workers,
+                pin_memory=dataloader.pin_memory,
+                collate_fn=dataloader.collate_fn,
+                generator=self._pers_generator,
+            )
+        return dataloader
 
     def train(
         self,
@@ -105,9 +127,10 @@ class DittoClientTrainer(ClientTrainer):
         total_pers_loss = 0.0
         total_prox_penalty = 0.0
         pers_samples = 0
+        pers_loader = self._get_phase2_dataloader(dataloader)
 
         for _ in range(effective_pers_epochs):
-            for batch in dataloader:
+            for batch in pers_loader:
                 inputs, targets = batch[0].to(device), batch[1].to(device)
                 if self.personalized_optimizer is not None:
                     self.personalized_optimizer.zero_grad()

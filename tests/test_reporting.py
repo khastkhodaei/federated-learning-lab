@@ -106,3 +106,29 @@ def test_save_baseline_report_does_not_generate_training_curves() -> None:
         )
         assert "training_curves" not in artifacts
         assert not (Path(tmp_dir) / "fedavg" / "training_curves.png").exists()
+
+
+def test_save_baseline_report_records_configured_device_metadata(tmp_path: Path) -> None:
+    """Verifies save_baseline_report records the configured compute device rather than hardcoding CPU."""
+    import torch
+
+    save_baseline_report(
+        baseline_name="fedavg",
+        round_history=[{"round": 1, "duration_seconds": 1.0, "total_samples": 10, "weighted_loss": 0.5}],
+        output_dir=str(tmp_path / "cpu_out"),
+        configured_device="cpu",
+    )
+    with open(tmp_path / "cpu_out" / "fedavg" / "metrics.json", "r", encoding="utf-8") as f:
+        cpu_data = json.load(f)
+    assert cpu_data["hardware"].startswith("CPU")
+
+    if torch.cuda.is_available():
+        save_baseline_report(
+            baseline_name="fedavg",
+            round_history=[{"round": 1, "duration_seconds": 1.0, "total_samples": 10, "weighted_loss": 0.5}],
+            output_dir=str(tmp_path / "cuda_out"),
+            configured_device="cuda",
+        )
+        with open(tmp_path / "cuda_out" / "fedavg" / "metrics.json", "r", encoding="utf-8") as f:
+            cuda_data = json.load(f)
+        assert cuda_data["hardware"].startswith("GPU")

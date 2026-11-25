@@ -7,7 +7,12 @@ from src.utils.benchmark_plotting import (
     load_benchmark_metrics,
     plot_benchmark_summary,
 )
-from run_benchmark import BENCHMARK_CONFIGS, run_full_benchmark
+from run_benchmark import (
+    BENCHMARK_CONFIGS,
+    parse_seeds,
+    run_full_benchmark,
+    summarize_multi_seed_runs,
+)
 
 
 @pytest.fixture
@@ -90,3 +95,81 @@ def test_run_full_benchmark_synthetic(tmp_path: Path) -> None:
     assert "plots" in results
     assert set(results["results"].keys()) == {"fedavg", "dfedpgp"}
     assert (tmp_path / "reports" / "dfedpgp" / "metrics.json").is_file()
+
+
+def test_multi_seed_mean_std_aggregation_and_cli_parsing(tmp_path: Path) -> None:
+    """Verifies multi-seed Mean/Std summary aggregation and end-to-end --seeds benchmark mode."""
+    assert parse_seeds("42,43,44") == [42, 43, 44]
+    assert parse_seeds(["42, 43", "44"]) == [42, 43, 44]
+    assert parse_seeds(None) is None
+
+    seed_histories = [
+        [
+            {
+                "global_test_accuracy": 0.40,
+                "global_on_local_accuracy": 0.50,
+                "local_test_accuracy": 0.70,
+                "majority_class_accuracy": 0.60,
+            },
+            {
+                "global_test_accuracy": 0.60,
+                "global_on_local_accuracy": 0.70,
+                "local_test_accuracy": 0.90,
+                "majority_class_accuracy": 0.60,
+            },
+        ],
+        [
+            {
+                "global_test_accuracy": 0.50,
+                "global_on_local_accuracy": 0.60,
+                "local_test_accuracy": 0.80,
+                "majority_class_accuracy": 0.60,
+            },
+            {
+                "global_test_accuracy": 0.70,
+                "global_on_local_accuracy": 0.80,
+                "local_test_accuracy": 0.90,
+                "majority_class_accuracy": 0.60,
+            },
+        ],
+    ]
+    summary = summarize_multi_seed_runs(seed_histories, last_n=10)
+    assert summary["num_seeds"] == 2
+    assert summary["global_test_accuracy_mean"] == pytest.approx(65.0)
+    assert summary["global_test_accuracy_std"] == pytest.approx(5.0)
+    assert summary["last_10_global_accuracy_mean"] == pytest.approx(55.0)
+    assert summary["last_10_global_accuracy_std"] == pytest.approx(5.0)
+    assert summary["global_on_local_accuracy_mean"] == pytest.approx(75.0)
+    assert summary["local_test_accuracy_mean"] == pytest.approx(90.0)
+    assert summary["local_test_accuracy_std"] == pytest.approx(0.0)
+    assert summary["majority_class_accuracy_mean"] == pytest.approx(60.0)
+
+    # End-to-end 2-seed synthetic benchmark execution
+    output_dir = tmp_path / "multi_plots"
+    bench = run_full_benchmark(
+        rounds=2,
+        clients=2,
+        epochs=1,
+        algorithms=["fedavg", "local_only"],
+        reports_dir=str(tmp_path / "multi_reports"),
+        output_dir=str(output_dir),
+        synthetic=True,
+        device="cpu",
+        seeds=[42, 43],
+        partition_seed=42,
+    )
+    assert bench["seeds"] == [42, 43]
+    assert (tmp_path / "multi_reports" / "seed_42" / "fedavg" / "metrics.json").is_file()
+    assert (tmp_path / "multi_reports" / "seed_43" / "local_only" / "metrics.json").is_file()
+
+    summary_json = output_dir / "benchmark_summary.json"
+    assert summary_json.is_file()
+    with open(summary_json, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    for algo in ("fedavg", "local_only"):
+        assert "last_10_global_accuracy" in payload[algo]
+        assert "global_test_accuracy_mean" in payload[algo]
+        assert "global_test_accuracy_std" in payload[algo]
+        assert "global_on_local_accuracy_mean" in payload[algo]
+        assert "local_test_accuracy_mean" in payload[algo]
+        assert "majority_class_accuracy_mean" in payload[algo]

@@ -416,6 +416,7 @@ def main() -> None:
             baseline_name=settings.baseline,
             round_history=round_history,
             output_dir=settings.report_dir,
+            configured_device=resolve_device(settings.device),
         )
         logger.info("Baseline report artifacts generated successfully:")
         logger.info("  [Metrics JSON]    %s", artifacts["metrics_json"])

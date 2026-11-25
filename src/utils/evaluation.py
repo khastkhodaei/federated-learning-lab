@@ -4,7 +4,8 @@ Provides baseline-agnostic evaluation routines for calculating loss,
 top-1 accuracy, and sample counts on centralized or client test sets.
 """
 
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Iterable, Sequence
 import logging
 from typing import Any
 
@@ -135,6 +136,43 @@ def compute_fairness_metrics(client_accuracies: list[float]) -> dict[str, float]
         "worst_10": worst_10,
         "best_10": best_10,
     }
+
+
+def compute_majority_class_accuracy(
+    train_dataloader: Iterable[Any] | None,
+    eval_dataloader: Iterable[Any] | None,
+) -> float:
+    """Computes accuracy of a constant majority-class predictor on eval_dataloader.
+
+    Selects the mode class from ``train_dataloader`` (or ``eval_dataloader`` if training
+    data is absent) and measures its accuracy on ``eval_dataloader``.
+    """
+    if eval_dataloader is None:
+        return 0.0
+
+    eval_counts: Counter[int] = Counter()
+    total_eval = 0
+    for batch in eval_dataloader:
+        if not isinstance(batch, (list, tuple)) or len(batch) < 2:
+            continue
+        for lbl in batch[1].view(-1).tolist():
+            eval_counts[int(lbl)] += 1
+            total_eval += 1
+
+    if total_eval == 0:
+        return 0.0
+
+    train_counts: Counter[int] = Counter()
+    if train_dataloader is not None:
+        for batch in train_dataloader:
+            if not isinstance(batch, (list, tuple)) or len(batch) < 2:
+                continue
+            for lbl in batch[1].view(-1).tolist():
+                train_counts[int(lbl)] += 1
+
+    source_counts = train_counts if train_counts else eval_counts
+    majority_label = max(source_counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+    return float(eval_counts[majority_label] / total_eval)
 
 
 def evaluate_model(

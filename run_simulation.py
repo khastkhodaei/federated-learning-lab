@@ -51,6 +51,8 @@ def run_federated_simulation(
     server_port: int = 0,
     synthetic: bool = False,
     device: str | None = None,
+    seed: int | None = None,
+    partition_seed: int | None = None,
     # FedProx
     mu: float | None = None,
     # Ditto
@@ -112,16 +114,18 @@ def run_federated_simulation(
     eff_algo = (algorithm or u_cfg.algorithm or u_cfg.baseline or "fedavg").lower().strip()
     device_name = resolve_device(device if device is not None else u_cfg.device)
     target_device = torch.device(device_name)
-    seed = u_cfg.seed or 42
+    eff_seed = seed if seed is not None else (u_cfg.seed or 42)
+    eff_partition_seed = partition_seed if partition_seed is not None else (u_cfg.seed or 42)
 
     logger.info("=" * 70)
     logger.info(
-        "Starting %s Simulation (clients=%d, rounds=%d, epochs=%d, device=%s)",
+        "Starting %s Simulation (clients=%d, rounds=%d, epochs=%d, device=%s, seed=%d)",
         eff_algo.upper(),
         eff_clients,
         eff_rounds,
         eff_epochs,
         device_name,
+        eff_seed,
     )
     logger.info("=" * 70)
 
@@ -129,6 +133,7 @@ def run_federated_simulation(
     strategy = create_server_strategy(
         eff_algo,
         config=u_cfg,
+        seed=eff_seed,
         graph_alpha=graph_alpha,
         graph_lam=graph_lam,
         out_degree=out_degree,
@@ -136,7 +141,7 @@ def run_federated_simulation(
     )
 
     # 2. Setup Central Coordinator Server
-    global_model = SimpleCNN(seed=seed).to(target_device)
+    global_model = SimpleCNN(seed=eff_seed).to(target_device)
     initial_weights = model_to_bytes(global_model)
 
     server = FederatedServer(
@@ -150,6 +155,9 @@ def run_federated_simulation(
     base_cfg = u_cfg.to_client_config(client_id=0)
     base_cfg.server_address = server_addr
     base_cfg.dataset.num_clients = eff_clients
+    base_cfg.dataset.seed = eff_partition_seed
+    base_cfg.dataset.shuffle_seed = eff_seed
+    base_cfg.model.seed = eff_seed
     base_cfg.algorithm = eff_algo
     base_cfg.training.device = device_name
 
@@ -192,11 +200,18 @@ def run_federated_simulation(
     synthetic_loaders = []
     if synthetic:
         logger.info("Using synthetic data partition for %d clients...", eff_clients)
-        for _ in range(eff_clients):
-            inputs = torch.randn(32, 3, 32, 32)
-            targets = torch.randint(0, 10, (32,))
+        synth_gen = torch.Generator().manual_seed(eff_partition_seed)
+        for idx in range(eff_clients):
+            inputs = torch.randn(32, 3, 32, 32, generator=synth_gen)
+            targets = torch.randint(0, 10, (32,), generator=synth_gen)
+            loader_gen = torch.Generator().manual_seed(eff_seed + idx)
             synthetic_loaders.append(
-                DataLoader(TensorDataset(inputs, targets), batch_size=base_cfg.dataset.batch_size)
+                DataLoader(
+                    TensorDataset(inputs, targets),
+                    batch_size=base_cfg.dataset.batch_size,
+                    shuffle=True,
+                    generator=loader_gen,
+                )
             )
         global_test_loader = None
     else:
@@ -254,8 +269,22 @@ def run_federated_simulation(
             nodes.append(node)
 
         logger.info("All %d client nodes successfully registered.", len(nodes))
+        client_majority_floors = [node.compute_majority_floor() for node in nodes]
+        majority_class_acc = (
+            float(np.mean(client_majority_floors)) if client_majority_floors else 0.0
+        )
+        logger.info(
+            "Majority-Class Predictor local floor: %.2f%% (clients: %s)",
+            majority_class_acc * 100,
+            [round(m * 100, 2) for m in client_majority_floors],
+        )
 
         # 6. Execute Federated Rounds
+        local_acc_type = (
+            "personalized_pre_agg"
+            if eff_algo in ("ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl", "local_only")
+            else "local_pre_agg"
+        )
         round_history = []
         for r in range(1, eff_rounds + 1):
             t_start = time.time()
@@ -288,19 +317,34 @@ def run_federated_simulation(
                 )
                 global_acc = float(eval_metrics.get("accuracy", 0.0))
 
+            global_on_local_accs: list[float] = []
+            agg_global_bytes = server.get_global_weights()
+            if agg_global_bytes:
+                for node in nodes:
+                    gol_metrics = node.evaluate_weights_on_local(agg_global_bytes)
+                    if gol_metrics.get("total", 0) > 0:
+                        global_on_local_accs.append(float(gol_metrics["accuracy"]))
+            mean_global_on_local_acc = (
+                float(sum(global_on_local_accs) / len(global_on_local_accs))
+                if global_on_local_accs
+                else 0.0
+            )
+
             acc_label = (
-                "Personalized Local Acc"
-                if eff_algo in ("ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl")
-                else "Local Acc"
+                "Personalized Local Acc (pre-agg)"
+                if local_acc_type == "personalized_pre_agg"
+                else "Local Acc (pre-agg)"
             )
             logger.info(
-                "Round %d/%d completed in %.2fs: Global Acc: %.2f%% | Mean %s: %.2f%% | Client Accs: %s",
+                "Round %d/%d completed in %.2fs: Global Acc: %.2f%% | Global-on-Local: %.2f%% | Mean %s: %.2f%% | Majority Floor: %.2f%% | Client Accs: %s",
                 r,
                 eff_rounds,
                 elapsed,
                 global_acc * 100,
+                mean_global_on_local_acc * 100,
                 acc_label,
                 mean_local_acc * 100,
+                majority_class_acc * 100,
                 [round(a * 100, 2) for a in client_accs],
             )
 
@@ -313,8 +357,12 @@ def run_federated_simulation(
                 "round_loss": round(avg_client_loss, 4),
                 "global_accuracy": round(global_acc * 100, 2),
                 "global_acc": round(global_acc * 100, 2),
+                "global_on_local_accuracy": round(mean_global_on_local_acc * 100, 2),
                 "mean_local_accuracy": round(mean_local_acc * 100, 2),
                 "mean_local_acc": round(mean_local_acc * 100, 2),
+                "local_test_accuracy": round(mean_local_acc * 100, 2),
+                "local_accuracy_type": local_acc_type,
+                "majority_class_accuracy": round(majority_class_acc * 100, 2),
                 "client_accuracies": [round(a * 100, 2) for a in client_accs],
             }
 
@@ -331,15 +379,20 @@ def run_federated_simulation(
         reporting_history = []
         for r_rec in round_history:
             c_accs = [a / 100.0 for a in r_rec.get("client_accuracies", [])]
+            local_val = r_rec.get("local_test_accuracy", r_rec.get("mean_local_accuracy", 0.0)) / 100.0
             rep_item = {
                 "round": r_rec.get("round_id", 1),
                 "duration_seconds": r_rec.get("elapsed_sec", 0.0),
                 "total_samples": r_rec.get("total_samples", 0),
                 "weighted_loss": r_rec.get("avg_client_loss", 0.0),
                 "global_test_accuracy": r_rec.get("global_accuracy", 0.0) / 100.0,
-                "mean_local_test_accuracy": r_rec.get("mean_local_accuracy", 0.0) / 100.0,
+                "global_on_local_accuracy": r_rec.get("global_on_local_accuracy", 0.0) / 100.0,
+                "local_test_accuracy": local_val,
+                "mean_local_test_accuracy": local_val,
+                "local_accuracy_type": r_rec.get("local_accuracy_type", local_acc_type),
+                "majority_class_accuracy": r_rec.get("majority_class_accuracy", 0.0) / 100.0,
                 "std_local_test_accuracy": float(np.std(c_accs)) if c_accs else 0.0,
-                "worst_10_local_accuracy": float(np.percentile(c_accs, 10)) if c_accs else (r_rec.get("mean_local_accuracy", 0.0) / 100.0),
+                "worst_10_local_accuracy": float(np.percentile(c_accs, 10)) if c_accs else local_val,
                 "client_metrics": {
                     f"client_{idx}": {"test_accuracy": ca} for idx, ca in enumerate(c_accs)
                 },
@@ -354,6 +407,7 @@ def run_federated_simulation(
                 baseline_name=eff_algo,
                 round_history=reporting_history,
                 output_dir=str(reports_dir),
+                configured_device=device_name,
             )
         except Exception as rep_err:
             logger.warning("Could not save baseline report: %s", rep_err)
@@ -412,8 +466,14 @@ def main() -> None:
         "-a",
         type=str,
         default=None,
-        choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl"],
+        choices=["fedavg", "fedprox", "ditto", "perfedavg", "pfedgraph", "dfedpgp", "dfpl", "local_only"],
         help="Federated optimization algorithm baseline",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Training/initialization random seed override",
     )
     parser.add_argument(
         "--clients",
@@ -585,6 +645,7 @@ def main() -> None:
         server_port=args.port,
         synthetic=args.synthetic,
         device=args.device,
+        seed=args.seed,
         mu=args.mu,
         lambda_penalty=args.lambda_penalty,
         personalized_epochs=args.personalized_epochs,

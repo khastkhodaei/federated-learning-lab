@@ -6,6 +6,7 @@ from .dfpl import DFPLClientTrainer, DFPLServerStrategy, DFPLTrainer
 from .ditto import DittoClientTrainer, DittoServerStrategy, DittoTrainer
 from .fedavg import FedAvgClientTrainer, FedAvgServerStrategy
 from .fedprox import FedProxClientTrainer, FedProxServerStrategy, FedProxTrainer
+from .local_only import LocalOnlyClientTrainer, LocalOnlyServerStrategy, LocalOnlyTrainer
 from .perfedavg import PerFedAvgClientTrainer, PerFedAvgServerStrategy, PerFedAvgTrainer
 from .pfedgraph import PFedGraphClientTrainer, PFedGraphServerStrategy, PFedGraphTrainer
 
@@ -17,6 +18,7 @@ BASELINES: dict[str, tuple[type[ServerStrategy], type[ClientTrainer]]] = {
     "pfedgraph": (PFedGraphServerStrategy, PFedGraphClientTrainer),
     "dfedpgp": (DFedPGPServerStrategy, DFedPGPClientTrainer),
     "dfpl": (DFPLServerStrategy, DFPLClientTrainer),
+    "local_only": (LocalOnlyServerStrategy, LocalOnlyClientTrainer),
 }
 
 
@@ -123,6 +125,9 @@ __all__ = [
     "FedProxClientTrainer",
     "FedProxServerStrategy",
     "FedProxTrainer",
+    "LocalOnlyClientTrainer",
+    "LocalOnlyServerStrategy",
+    "LocalOnlyTrainer",
     "PFedGraphClientTrainer",
     "PFedGraphServerStrategy",
     "PFedGraphTrainer",

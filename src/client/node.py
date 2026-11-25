@@ -205,6 +205,43 @@ class Node:
             device=self.device,
         )
 
+    def evaluate_weights_on_local(
+        self,
+        weights: bytes,
+        dataloader: Any | None = None,
+    ) -> dict[str, Any]:
+        """Evaluates serialized model weights (e.g. post-aggregation global model) on local test data.
+
+        Uses a temporary copy of ``self.model`` so local/personalized weights are never mutated
+        and per-client adaptation is skipped.
+        """
+        eval_loader = (
+            dataloader
+            if dataloader is not None
+            else (self.test_data if self.test_data is not None else self.data)
+        )
+        if self.model is None or eval_loader is None or not weights:
+            return {"loss": 0.0, "accuracy": 0.0, "correct": 0, "total": 0}
+
+        import copy
+        from src.utils.evaluation import evaluate_model
+
+        temp_model = copy.deepcopy(self.model).to(self.device)
+        load_bytes_into_model(weights, temp_model)
+        return evaluate_model(
+            model=temp_model,
+            dataloader=eval_loader,
+            criterion=self.criterion,
+            device=self.device,
+        )
+
+    def compute_majority_floor(self) -> float:
+        """Computes the majority-class predictor accuracy floor on this client's local test data."""
+        from src.utils.evaluation import compute_majority_class_accuracy
+
+        eval_loader = self.test_data if self.test_data is not None else self.data
+        return compute_majority_class_accuracy(self.data, eval_loader)
+
     def on_train_round(self, request: TrainRequest) -> TrainResponse:
         """Handles an incoming gRPC TrainRound request from the server.
 
@@ -221,8 +258,12 @@ class Node:
             len(request.weights),
         )
 
-        # 1. Unpack received global weights into local model
-        if self.model is not None and request.weights:
+        # 1. Unpack received global weights into local model unless baseline opts out (e.g. local_only)
+        if (
+            self.model is not None
+            and request.weights
+            and not getattr(self.trainer, "ignore_global_weights", False)
+        ):
             load_bytes_into_model(request.weights, self.model)
             logger.info(
                 "Node %s synchronized local model with round %d global parameters",

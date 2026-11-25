@@ -59,8 +59,14 @@ def build_client_dataloaders(
                     cfg.dataset.seed or 42
                 ),
             )
+            train_gen = torch.Generator().manual_seed(
+                int(cfg.dataset.seed or 42) + int(client_id)
+            )
             dataloader = DataLoader(
-                train_ds, batch_size=cfg.dataset.batch_size, shuffle=True
+                train_ds,
+                batch_size=cfg.dataset.batch_size,
+                shuffle=True,
+                generator=train_gen,
             )
             test_loader = DataLoader(
                 val_ds, batch_size=cfg.dataset.batch_size, shuffle=False

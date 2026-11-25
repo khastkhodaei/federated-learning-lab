@@ -59,6 +59,7 @@ class DatasetConfig:
     data_dir: str = "./data"
     seed: int | None = 42
     val_ratio: float = 0.2
+    shuffle_seed: int | None = None
 
 
 @dataclass
@@ -416,6 +417,10 @@ def create_trainer(
         from src.baselines.fedavg.trainer import FedAvgClientTrainer
 
         return FedAvgClientTrainer()
+    elif algo in ("local_only", "local-only", "localonly"):
+        from src.baselines.local_only.trainer import LocalOnlyClientTrainer
+
+        return LocalOnlyClientTrainer()
     else:
         logger.warning(
             "Unrecognized algorithm '%s'; defaulting to FedAvgClientTrainer", algorithm
@@ -524,8 +529,19 @@ def create_client_node(
                     [train_len, val_len],
                     generator=torch.Generator().manual_seed(config.dataset.seed or 42),
                 )
+                shuffle_base = (
+                    config.dataset.shuffle_seed
+                    if config.dataset.shuffle_seed is not None
+                    else (config.dataset.seed or 42)
+                )
+                train_gen = torch.Generator().manual_seed(
+                    int(shuffle_base) + int(config.dataset.client_id)
+                )
                 data_loader = DataLoader(
-                    train_ds, batch_size=config.dataset.batch_size, shuffle=True
+                    train_ds,
+                    batch_size=config.dataset.batch_size,
+                    shuffle=True,
+                    generator=train_gen,
                 )
                 test_loader = DataLoader(
                     val_ds, batch_size=config.dataset.batch_size, shuffle=False
@@ -568,8 +584,19 @@ def create_client_node(
                         [train_len, val_len],
                         generator=torch.Generator().manual_seed(config.dataset.seed or 42),
                     )
+                    shuffle_base = (
+                        config.dataset.shuffle_seed
+                        if config.dataset.shuffle_seed is not None
+                        else (config.dataset.seed or 42)
+                    )
+                    train_gen = torch.Generator().manual_seed(
+                        int(shuffle_base) + int(config.dataset.client_id)
+                    )
                     data_loader = DataLoader(
-                        train_ds, batch_size=config.dataset.batch_size, shuffle=True
+                        train_ds,
+                        batch_size=config.dataset.batch_size,
+                        shuffle=True,
+                        generator=train_gen,
                     )
                     test_loader = DataLoader(
                         val_ds, batch_size=config.dataset.batch_size, shuffle=False

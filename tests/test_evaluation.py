@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.transport.federated_pb2 import TrainResponse
 from src.utils.evaluation import (
     aggregate_client_round_metrics,
+    compute_majority_class_accuracy,
     evaluate_model,
     get_global_test_loader,
 )
@@ -115,3 +116,19 @@ def test_aggregate_client_round_metrics_excludes_missing_without_zero_imputation
     assert "loss" not in summary["client_metrics"]["client_2"]
     assert any("client_1" in rec.message and "test_acc" in rec.message for rec in caplog.records)
     assert any("client_2" in rec.message for rec in caplog.records)
+
+
+def test_compute_majority_class_accuracy() -> None:
+    """Verifies majority-class predictor floor accuracy from skewed train/eval partitions."""
+    train_x = torch.zeros((10, 2))
+    train_y = torch.tensor([3] * 8 + [1] * 2)
+    train_loader = DataLoader(TensorDataset(train_x, train_y), batch_size=5)
+
+    eval_x = torch.zeros((5, 2))
+    eval_y = torch.tensor([3, 3, 3, 1, 2])
+    eval_loader = DataLoader(TensorDataset(eval_x, eval_y), batch_size=5)
+
+    acc = compute_majority_class_accuracy(train_loader, eval_loader)
+    assert acc == pytest.approx(0.6)
+    assert compute_majority_class_accuracy(None, eval_loader) == pytest.approx(0.6)
+    assert compute_majority_class_accuracy(train_loader, None) == pytest.approx(0.0)

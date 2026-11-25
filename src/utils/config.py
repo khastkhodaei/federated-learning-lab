@@ -98,6 +98,11 @@ class PdflConfig:
 
 
 @dataclass
+class LocalOnlyConfig:
+    """Hyperparameters for Local-Only non-federated reference baseline."""
+
+
+@dataclass
 class DittoConfig:
     """Hyperparameters for Ditto personalized federated learning."""
 
@@ -154,6 +159,7 @@ class BaselinesConfig:
     pfedgraph: PFedGraphConfig = field(default_factory=PFedGraphConfig)
     dfedpgp: DFedPGPConfig = field(default_factory=DFedPGPConfig)
     dfpl: DFPLConfig = field(default_factory=DFPLConfig)
+    local_only: LocalOnlyConfig = field(default_factory=LocalOnlyConfig)
     scaffold: ScaffoldConfig = field(default_factory=ScaffoldConfig)
     pdfl: PdflConfig = field(default_factory=PdflConfig)
 

@@ -60,6 +60,7 @@ baselines:
     normalize_prototypes: false
     loss_type: "mse"
     aggregate_weights: true
+  local_only: {}
   scaffold: {}
   pdfl:
     similarity_threshold: 0.5

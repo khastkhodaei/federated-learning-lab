@@ -54,6 +54,7 @@ def save_baseline_report(
     baseline_name: str,
     round_history: list[dict[str, Any]],
     output_dir: str = "reports",
+    configured_device: str = "cpu",
 ) -> dict[str, str]:
     """Saves structured metrics.json, loss_curve.png, round_duration.png,
 
@@ -84,7 +85,7 @@ def save_baseline_report(
 
     report_data = {
         "baseline": clean_baseline,
-        "hardware": get_hardware_summary(),
+        "hardware": get_hardware_summary(configured_device=configured_device),
         "timestamp": datetime.now().isoformat(),
         "total_rounds": len(round_history),
         "rounds": round_history,

@@ -64,6 +64,12 @@ ALGORITHM_STYLES = {
         "linestyle": "-",
         "label": "DFPL (Prototype Alignment)",
     },
+    "local_only": {
+        "color": "#8c564b",  # Chestnut Brown
+        "marker": "h",
+        "linestyle": ":",
+        "label": "Local-Only (No FL)",
+    },
 }
 
 DEFAULT_STYLE = {
@@ -87,7 +93,7 @@ def load_benchmark_metrics(
     Returns:
         Dict mapping algorithm name to parsed metrics dictionary.
     """
-    target_algos = algorithms or [
+    target_algos = list(algorithms) if algorithms is not None else [
         "fedavg",
         "fedprox",
         "ditto",
@@ -97,6 +103,8 @@ def load_benchmark_metrics(
         "dfpl",
     ]
     base_dir = Path(reports_dir)
+    if algorithms is None and (base_dir / "local_only" / "metrics.json").is_file():
+        target_algos.append("local_only")
     results: dict[str, dict[str, Any]] = {}
 
     for algo in target_algos:
@@ -149,8 +157,9 @@ def plot_global_accuracy_comparison(
         ]
 
         style = ALGORITHM_STYLES.get(algo, DEFAULT_STYLE)
-        max_acc = max(global_accs) if global_accs else 0.0
-        label_text = f"{style['label']} (Max: {max_acc:.1f}%)"
+        window = min(10, len(global_accs)) if global_accs else 1
+        last10_acc = sum(global_accs[-window:]) / window if global_accs else 0.0
+        label_text = f"{style['label']} (Last-10: {last10_acc:.1f}%)"
 
         ax.plot(
             rounds,
@@ -213,8 +222,9 @@ def plot_local_accuracy_comparison(
         ]
 
         style = ALGORITHM_STYLES.get(algo, DEFAULT_STYLE)
-        max_local = max(local_accs) if local_accs else 0.0
-        label_text = f"{style['label']} (Max: {max_local:.1f}%)"
+        window = min(10, len(local_accs)) if local_accs else 1
+        last10_local = sum(local_accs[-window:]) / window if local_accs else 0.0
+        label_text = f"{style['label']} (Last-10: {last10_local:.1f}%)"
 
         ax.plot(
             rounds,
@@ -299,16 +309,19 @@ def plot_benchmark_summary(
 
         style = ALGORITHM_STYLES.get(algo, DEFAULT_STYLE)
         lbl = style["label"]
+        window = min(10, len(rounds_data))
+        g_last10 = sum(g_accs[-window:]) / window if g_accs else 0.0
+        l_last10 = sum(l_accs[-window:]) / window if l_accs else 0.0
 
         ax_g.plot(
             rounds, g_accs, marker=style["marker"], color=style["color"],
             linestyle=style["linestyle"], linewidth=1.8, markersize=4,
-            label=f"{lbl} ({max(g_accs):.1f}%)", alpha=0.9,
+            label=f"{lbl} ({g_last10:.1f}%)", alpha=0.9,
         )
         ax_l.plot(
             rounds, l_accs, marker=style["marker"], color=style["color"],
             linestyle=style["linestyle"], linewidth=1.8, markersize=4,
-            label=f"{lbl} ({max(l_accs):.1f}%)", alpha=0.9,
+            label=f"{lbl} ({l_last10:.1f}%)", alpha=0.9,
         )
 
     ax_g.set_title("Global Test Accuracy (Balanced)", fontsize=11, fontweight="bold")
@@ -342,13 +355,22 @@ def plot_benchmark_summary(
         if not rounds_data:
             continue
         g_accs = [float(r.get("global_test_accuracy", 0.0)) * 100.0 for r in rounds_data]
-        l_accs = [float(r.get("mean_local_test_accuracy", 0.0)) * 100.0 for r in rounds_data]
+        gol_accs = [float(r.get("global_on_local_accuracy", 0.0)) * 100.0 for r in rounds_data]
+        l_accs = [
+            float(r.get("local_test_accuracy", r.get("mean_local_test_accuracy", 0.0))) * 100.0
+            for r in rounds_data
+        ]
+        maj_accs = [float(r.get("majority_class_accuracy", 0.0)) * 100.0 for r in rounds_data]
         losses = [float(r.get("weighted_loss", 0.0)) for r in rounds_data]
+        window = min(10, len(rounds_data))
         summary_data[algo] = {
-            "max_global_accuracy": max(g_accs) if g_accs else 0.0,
-            "final_global_accuracy": g_accs[-1] if g_accs else 0.0,
-            "max_local_accuracy": max(l_accs) if l_accs else 0.0,
-            "final_local_accuracy": l_accs[-1] if l_accs else 0.0,
+            "last_10_global_accuracy": round(sum(g_accs[-window:]) / window, 4),
+            "final_global_accuracy": round(g_accs[-1], 4),
+            "last_10_global_on_local_accuracy": round(sum(gol_accs[-window:]) / window, 4),
+            "final_global_on_local_accuracy": round(gol_accs[-1], 4),
+            "last_10_local_accuracy": round(sum(l_accs[-window:]) / window, 4),
+            "final_local_accuracy": round(l_accs[-1], 4),
+            "majority_class_accuracy": round(maj_accs[-1], 4),
             "final_loss": losses[-1] if losses else 0.0,
             "rounds_completed": len(rounds_data),
         }
